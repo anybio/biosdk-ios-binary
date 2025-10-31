@@ -1,0 +1,9 @@
+# Ignore built binary artifacts
+Artifacts/
+**/*.xcframework
+**/*.zip
+
+# SwiftPM build folder if used locally here
+.build/
+.swiftpm/
+Package.resolved
