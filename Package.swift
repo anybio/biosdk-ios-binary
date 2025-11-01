@@ -12,45 +12,37 @@ let package = Package(
         .iOS(.v16)
     ],
     products: [
-        // Aggregated SDK product: import BioSDK to get everything.
-        .library(name: "BioSDK", targets: ["BioKit"]),
-        // Also expose individual module products for advanced users.
-        .library(name: "BioSDKCore", targets: ["BioSDKCore"]),
-        .library(name: "BioBLE", targets: ["BioBLE"]),
-        .library(name: "BioIngest", targets: ["BioIngest"]),
-        .library(name: "BioUI", targets: ["BioUI"])    
+        // Primary product that includes all binary frameworks and dependencies
+        .library(name: "BioSDK", targets: ["BioSDKWrapper"])
     ],
     dependencies: [
         // External dependencies must be provided by the consumer when linking
         // the binary frameworks, to satisfy transitive symbols. Pin versions to
         // those used to build the binaries.
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.31.0"),
-        .package(url: "https://github.com/nicklockwood/Expression.git", from: "0.13.0"),
         .package(url: "https://github.com/stephencelis/SQLite.swift.git", from: "0.15.0"),
     ],
     targets: [
-        // LOCAL DEV: path-based binary targets pointing at built artifacts.
-        // RELEASE: replace with .binaryTarget(name:url:checksum:) using your
-        // uploaded GitHub Release asset URLs and checksums printed by the build script.
-        .binaryTarget(name: "BioSDKCore", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.0/BioSDKCore.xcframework.zip", checksum: "8d1ac64e0b5f35ceb53632b1c45728e67e4fe52dfdd62aa41a19395c1f3415e8"),
-        .binaryTarget(name: "BioBLE", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.0/BioBLE.xcframework.zip", checksum: "a1cc081519bdef482e1c1abceffccc2dbb29c00c57112a54aba1f8ee025bdfa0"),
-        .binaryTarget(name: "BioIngest", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.0/BioIngest.xcframework.zip", checksum: "b75b0ad78b915c7978865cf579e34d3592b725bc13ec5872f0e1cb8a22619dd1"),
-        .binaryTarget(name: "BioSDK", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.0/BioSDK.xcframework.zip", checksum: "1973e6ddaa0aa2d5e17083469df211b4fbd2a4036c0b62b610b0fa73ee6f1173"),
-        .binaryTarget(name: "BioUI", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.0/BioUI.xcframework.zip", checksum: "e6c96cc066c0e585375ce92513a21bdf685fa6891844858ac41de74187b35a31"),
-        
-	// Aggregator target that pulls in all modules and re-exports them.
-        // This contains only a small Swift shim and no proprietary source.
+        // Binary targets containing the prebuilt XCFrameworks
+        .binaryTarget(name: "BioSDKBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.2/BioSDK.xcframework.zip", checksum: "e9bf12075c9c1433cad9d8fd2c16566892ea18eb53fc5b1120e6174eaadc33c0"),
+        .binaryTarget(name: "BioSDKCoreBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.2/BioSDKCore.xcframework.zip", checksum: "3a9c9a3079378a0ba51b0f47f3cbea6a2ffa7d6efd8a039680141121590c4210"),
+        .binaryTarget(name: "BioBLEBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.2/BioBLE.xcframework.zip", checksum: "8c672b5ba6064d7d5eb963b5c4f754666fbc3c1083e15c31422c441a09400cc9"),
+        .binaryTarget(name: "BioIngestBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.2/BioIngest.xcframework.zip", checksum: "4d69ae786c7a1ea44f3ca06eebb80139c1e032a0ff1b06845c977dedf0bb4102"),
+        .binaryTarget(name: "BioUIBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.2/BioUI.xcframework.zip", checksum: "b711062ef64e7cdbf15021b7d8affc92662f1670d1c9d8b1958b759fe2e8087a"),
+
+        // Wrapper target that aggregates all binaries and dependencies without re-exporting
         .target(
-            name: "BioKit",
+            name: "BioSDKWrapper",
             dependencies: [
-                // Binary frameworks
-                "BioSDKCore", "BioBLE", "BioIngest", "BioSDK", "BioUI",
-                // Third-party products to satisfy link-time dependencies
+                "BioSDKCoreBinary",
+                "BioBLEBinary",
+                "BioIngestBinary",
+                "BioSDKBinary",
+                "BioUIBinary",
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
-                .product(name: "Expression", package: "Expression"),
                 .product(name: "SQLite", package: "SQLite.swift")
             ],
-            path: "Aggregators/BioKit"
+            path: "Aggregators/BioSDKWrapper"
         )
     ]
 )
