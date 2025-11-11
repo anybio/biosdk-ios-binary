@@ -24,11 +24,11 @@ let package = Package(
     ],
     targets: [
         // Binary targets containing the prebuilt XCFrameworks
-        .binaryTarget(name: "BioSDKBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.18/BioSDK.xcframework.zip", checksum: "f9a14f966749c2873a651be1e0dbde947f47bf7b2a9862f6a2e45133aa980696"),
-        .binaryTarget(name: "BioSDKCoreBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.18/BioSDKCore.xcframework.zip", checksum: "3f5e8dc28b0a5a7f822a8699b6ba0ce1b428ad10b190f55175780e2b46e30814"),
-        .binaryTarget(name: "BioBLEBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.18/BioBLE.xcframework.zip", checksum: "d02bbf90f50457bba8ea41ba7361661f951cd7c27139962ba189ada7c7052b6d"),
-        .binaryTarget(name: "BioIngestBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.18/BioIngest.xcframework.zip", checksum: "1118e3c95b9f75c29df1b4610d2d6d5ebb595ef18d05343362f010dea3e88de6"),
-        .binaryTarget(name: "BioUIBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.18/BioUI.xcframework.zip", checksum: "80439553d8ce12a670703b52836eedbc138c5db213594e330767fc5984ae6542"),
+        .binaryTarget(name: "BioSDKBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.19/BioSDK.xcframework.zip", checksum: "936c7b4d8935a7560995c22307a8b6addc9236ff59b89bc9222373269575cda5"),
+        .binaryTarget(name: "BioSDKCoreBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.19/BioSDKCore.xcframework.zip", checksum: "9fb38cd13615807872d8f8dcb82d87365e673247930aa908b40fb42127ec5a81"),
+        .binaryTarget(name: "BioBLEBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.19/BioBLE.xcframework.zip", checksum: "85ffd2c9987b03040507278a3f6971bdb2bf5abba03b9590b922bc2b69795b4d"),
+        .binaryTarget(name: "BioIngestBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.19/BioIngest.xcframework.zip", checksum: "50336cf5ba44e68f7e96b43bc967f7b88c6b6bd9e62b97f1763f83e96e103a7f"),
+        .binaryTarget(name: "BioUIBinary", url: "https://github.com/anybio/biosdk-ios-binary/releases/download/v1.0.19/BioUI.xcframework.zip", checksum: "c421535e33399a2d42bc2f3926610501d468d45eddb7ccc8c4cda513f0deb8ba"),
 
         // Wrapper target that aggregates all binaries and dependencies without re-exporting
         .target(
