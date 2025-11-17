@@ -1,69 +1,73 @@
-# BioSDK Binary Distribution (Dynamic)
+# BioSDK Binary Distribution
 
-This folder contains the Swift Package manifest for distributing the BioSDK as prebuilt dynamic XCFrameworks. It is set up for local testing with path-based binary targets, and for release via GitHub (or any HTTPS host) using URL + checksum.
+Binary distribution of BioSDK for iOS via Swift Package Manager.
 
-What you get
-- Dynamic XCFrameworks for: BioSDKCore, BioBLE, BioIngest, BioSDK, BioUI
-- A convenience aggregator module: BioKit (add the product named "BioSDK" and import BioKit)
-- No source code disclosed in the binary package
+## Installation
 
-Prerequisites
-- Xcode 14+
-- iOS 16+ target (can be widened later)
-
-Compatibility modes (library evolution)
-- Default build disables Swift library evolution to avoid third‑party module interface verification issues during Release builds.
-- To enable Swift library evolution (emits .swiftinterface for better cross‑toolchain compatibility), set an environment toggle:
-
-```bash
-# Default (safer with some dependencies): no library evolution
-LIB_EVOLUTION=0 ./BioSDK/scripts/build_xcframeworks.sh
-
-# Enable library evolution (recommended once all dependencies verify cleanly)
-LIB_EVOLUTION=1 ./BioSDK/scripts/build_xcframeworks.sh
-```
-
-Build locally (device + simulator)
-From the repo root or BioSDK/:
-
-```bash
-# Default build (no library evolution)
-chmod +x BioSDK/scripts/build_xcframeworks.sh
-./BioSDK/scripts/build_xcframeworks.sh
-```
-
-Artifacts produced
-- BioSDK/BinaryDistribution/Artifacts/*.xcframework
-- BioSDK/BinaryDistribution/Artifacts/*.xcframework.zip
-- Checksums printed to the terminal
-
-Local consumption (without publishing)
-In your app, add a local package dependency pointing to this folder:
-- Xcode → Project → Package Dependencies → + → Add Local… → select BioSDK/BinaryDistribution
-- Add the product named "BioSDK" to your app target (this maps to module BioKit)
-- In code:
+Add to your `Package.swift`:
 
 ```swift
-import BioKit // re-exports BioSDKCore, BioBLE, BioIngest, BioSDK, BioUI
+dependencies: [
+    .package(url: "https://github.com/anybio/biosdk-ios-binary.git", from: "1.0.0")
+]
 ```
 
-Publishing (recommended)
-1) Create a public repo for the binary package, e.g. your-org/BioSDK-Binary.
-2) Copy this entire BinaryDistribution/ folder to the root of that repo.
-3) Create a GitHub Release (e.g. v1.0.0) and upload each Artifacts/*.xcframework.zip.
-4) Edit Package.swift in that repo and replace each .binaryTarget path with url + checksum using the printed values from the build.
-5) Commit, tag, and push.
+Or add via Xcode:
+1. File → Add Package Dependencies
+2. Enter: `https://github.com/anybio/biosdk-ios-binary.git`
+3. Select version `1.0.0` or later
 
-Consumers can then add:
+## Usage
+
 ```swift
-.package(url: "https://github.com/your-org/BioSDK-Binary.git", exact: "1.0.0")
+import BioSDK
+
+// Initialize SDK
+let sdk = BioSDKClient(configuration: .auto(
+    organizationKey: "your-org-key",
+    projectKey: "your-project-key"
+))
+
+// Start scanning for devices
+sdk.startScan()
+
+// Connect to a device
+sdk.connect(device)
+
+// Start streaming
+try await sdk.startBackendSession(for: xUserId) { result in
+    switch result {
+    case .success(let sessionId):
+        print("Session started: \(sessionId)")
+    case .failure(let disposition):
+        print("Session conflict or error: \(disposition)")
+    }
+}
 ```
-And link the product named "BioSDK", then import BioKit.
 
-Notes
-- Dynamic frameworks: consumers don’t need to declare your third-party dependencies; they are linked into the frameworks.
-- If you later add resources to any module, re-run the script; XCFrameworks will include them automatically.
-- If you need macCatalyst or tvOS, the build script can be extended similarly.
+## What's Included
 
-Troubleshooting
-- Expression.swiftinterface verification errors during Release builds can occur with some toolchain versions. The default build disables interface verification and library evolution to avoid this. To ship with library evolution, update to dependency versions that emit valid interfaces with your Xcode, then use `LIB_EVOLUTION=1`.
+This package provides a single unified `BioSDK.xcframework` containing:
+
+- **BioSDKCore** - Core models and protocols
+- **BioBLECore** - Objective-C BLE layer (XCFramework-safe)
+- **BioBLE** - Swift BLE management
+- **BioIngest** - HTTP streaming clients
+- **BioSDK** - Main SDK orchestration
+- **BioUI** - Optional SwiftUI components
+
+All modules are bundled together for maximum compatibility and ease of use.
+
+## Requirements
+
+- iOS 16.0+
+- Xcode 15.0+
+- Swift 5.9+
+
+## Architecture
+
+This binary distribution uses an umbrella framework approach to avoid Swift ABI stability issues across XCFramework module boundaries. All BLE operations use Objective-C bridging for maximum compatibility.
+
+## License
+
+Proprietary - © AnyBio, Inc.
