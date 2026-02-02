@@ -14,21 +14,15 @@ let package = Package(
             targets: ["BioUI"]
         )
     ],
-    dependencies: [
-        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.31.0")
-    ],
     targets: [
         .binaryTarget(
             name: "BioSDK",
-            url: "https://github.com/anybio/biosdk-ios-binary/releases/download/1.0.43/BioSDK.xcframework.zip",
-            checksum: "b5a423b52a3d31bca4c997b8d389b36099620cc4ac0c76d4bf3afed1b10fbf9b"
+            url: "https://github.com/anybio/biosdk-ios-binary/releases/download/1.0.44/BioSDK.xcframework.zip",
+            checksum: "961ac52f0989e5d5d73194ad4ae52ff772b28a6eacc88e037e65d41fb0d029b2"
         ),
         .target(
             name: "BioUI",
-            dependencies: [
-                "BioSDK",
-                .product(name: "SwiftProtobuf", package: "swift-protobuf")
-            ],
+            dependencies: ["BioSDK"],
             path: "Sources/BioUI"
         )
     ]
