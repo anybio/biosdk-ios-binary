@@ -369,6 +369,31 @@ final class BioDeviceListViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Streaming Profiles
+
+    func getStreamingProfiles(for deviceId: UUID) -> [StreamingProfileUI] {
+        return sdk.getStreamingProfiles(deviceId: deviceId)
+    }
+
+    func activeStreamingProfile(for deviceId: UUID) -> String? {
+        return sdk.activeStreamingProfile(deviceId: deviceId)
+    }
+
+    func activateStreamingProfile(deviceId: UUID, profileName: String) {
+        Task {
+            do {
+                try await sdk.activateStreamingProfile(deviceId: deviceId, profileName: profileName)
+                print("Streaming profile '\(profileName)' activated successfully")
+            } catch {
+                print("Failed to activate streaming profile '\(profileName)': \(error)")
+            }
+        }
+    }
+
+    func deactivateStreamingProfile(deviceId: UUID) {
+        sdk.deactivateStreamingProfile(deviceId: deviceId)
+    }
+
     func resetDevices() {
         // Stop all streaming and disconnect all devices for fresh reconnection
         sdk.stopStreaming()
@@ -549,7 +574,11 @@ public struct BioDeviceListView: View {
                                        disconnect: { vm.disconnect(row) },
                                        toggleStream: { vm.toggleStreaming(row) },
                                        getOperations: { vm.getDeviceOperations(for: row.id) },
-                                       executeOperation: { opName in vm.executeOperation(deviceId: row.id, operationName: opName) })
+                                       executeOperation: { opName in vm.executeOperation(deviceId: row.id, operationName: opName) },
+                                       getStreamingProfiles: { vm.getStreamingProfiles(for: row.id) },
+                                       activeStreamingProfile: { vm.activeStreamingProfile(for: row.id) },
+                                       activateStreamingProfile: { name in vm.activateStreamingProfile(deviceId: row.id, profileName: name) },
+                                       deactivateStreamingProfile: { vm.deactivateStreamingProfile(deviceId: row.id) })
                     }
                 }
             }
@@ -1035,6 +1064,10 @@ fileprivate struct SessionRowView: View {
     let toggleStream: ()->Void
     let getOperations: () -> [DeviceOperationUI]
     let executeOperation: (String) -> Void
+    let getStreamingProfiles: () -> [StreamingProfileUI]
+    let activeStreamingProfile: () -> String?
+    let activateStreamingProfile: (String) -> Void
+    let deactivateStreamingProfile: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1074,6 +1107,49 @@ fileprivate struct SessionRowView: View {
                     Button(streamActionTitle, action: toggleStream)
                 }
                 .disabled(sessionActive || !canManualStream)
+
+                // Streaming Profiles Section
+                let profiles = getStreamingProfiles()
+                if !profiles.isEmpty {
+                    let activeProfile = activeStreamingProfile()
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Streaming Profiles")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+
+                        ForEach(profiles) { profile in
+                            let isActive = activeProfile == profile.name
+                            Button {
+                                if isActive {
+                                    deactivateStreamingProfile()
+                                } else {
+                                    activateStreamingProfile(profile.name)
+                                }
+                            } label: {
+                                HStack {
+                                    Image(systemName: isActive ? "checkmark.circle.fill" : "play.circle")
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(profile.name.replacingOccurrences(of: "_", with: " ").capitalized)
+                                            .font(.caption)
+                                        if let desc = profile.description {
+                                            Text(desc)
+                                                .font(.caption2)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                    if isActive {
+                                        Text("Active")
+                                            .font(.caption2)
+                                            .foregroundColor(.green)
+                                    }
+                                }
+                            }
+                            .tint(isActive ? .green : .blue)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
 
                 // Device Operations Section
                 let operations = getOperations()
