@@ -47,6 +47,7 @@ final class BioDeviceListViewModel: ObservableObject {
     @Published var showConflictAlert: Bool = false
     @Published var showNonStreamingWarning: Bool = false
     @Published var startError: String? = nil
+    @Published var checkSessionResult: String? = nil  // transient feedback for Check Session
     private var pendingXUser: String? = nil
 
     // Provide injected xUser (optional). If nil, start UI will be hidden.
@@ -149,7 +150,19 @@ final class BioDeviceListViewModel: ObservableObject {
 
     func checkForActiveSession() {
         startStatusMessage = "Checking for active session..."
-        sdk.checkForActiveSession()
+        checkSessionResult = nil
+        Task { @MainActor in
+            do {
+                let found = try await sdk.checkForActiveSession()
+                startStatusMessage = nil
+                if !found {
+                    checkSessionResult = "No active session found"
+                }
+            } catch {
+                startStatusMessage = nil
+                checkSessionResult = "Check failed: \(error.localizedDescription)"
+            }
+        }
     }
 
     func abortStartAttempts() {
@@ -256,6 +269,7 @@ final class BioDeviceListViewModel: ObservableObject {
             self.sessionDevices = sessionDevices
             activeSessionDeviceIds = Set(sessionEligibleDevices.map { $0.id })
             conflictActiveId = nil
+            checkSessionResult = nil
             showConflictAlert = false
             startError = nil
             startStatusMessage = nil
@@ -640,6 +654,12 @@ public struct BioDeviceListView: View {
                             }
                             .buttonStyle(.bordered)
                             .frame(maxWidth: .infinity)
+
+                            if let result = vm.checkSessionResult {
+                                Text(result)
+                                    .font(.caption)
+                                    .foregroundColor(result.contains("failed") ? .red : .secondary)
+                            }
 
                             if vm.canStartSession {
                                 if vm.isStartingSession {
