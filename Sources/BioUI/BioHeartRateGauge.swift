@@ -52,8 +52,5 @@ public struct BioHeartRateGauge: View {
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .onChange(of: bpm) { newBPM in
-            print("BioHeartRateGauge: current BPM = \(newBPM)")
-        }
     }
 }

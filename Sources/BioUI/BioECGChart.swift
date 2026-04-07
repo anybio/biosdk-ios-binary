@@ -20,7 +20,9 @@ public struct BioECGChart: View {
             live: live,
             series: \.ecg,       // [TimeSeries]
             title: "ECG (mV)",
-            cap: 2_000           // ~5s @ 400 Hz
+            cap: 2_000,          // ~5s @ 400 Hz
+            smooth: true,
+            lineWidth: 1.0
         )
     }
 }

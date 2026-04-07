@@ -73,9 +73,6 @@ public struct BioSpO2Gauge: View {
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .onChange(of: spo2) { newValue in
-            print("BioSpO2Gauge: current SpO₂ = \(newValue)%")
-        }
     }
 
     private func statusText(for value: Double) -> String {

@@ -57,4 +57,11 @@ public extension BioChartConfig {
                      paused: Binding<Bool>? = nil) -> BioChartConfig {
         .init(title: title, yUnit: yUnit, maxPoints: 600, yRange: range, paused: paused)
     }
+    static func accel(title: String = "Accelerometer",
+                      yUnit: String = "g",
+                      maxPoints: Int = 500,
+                      range: ClosedRange<Double> = -4...4,
+                      paused: Binding<Bool>? = nil) -> BioChartConfig {
+        .init(title: title, yUnit: yUnit, maxPoints: maxPoints, yRange: range, paused: paused)
+    }
 }

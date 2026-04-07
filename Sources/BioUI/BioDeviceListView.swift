@@ -1,10 +1,13 @@
 import SwiftUI
 import Combine
 import BioSDK
+import os.log
 
 #if canImport(UIKit)
 import UIKit
 #endif
+
+private let logger = Logger(subsystem: "io.anybio.bioui", category: "DeviceList")
 
 // Internal model for each device row.
 struct DeviceRow: Identifiable, Equatable { // was fileprivate
@@ -102,22 +105,22 @@ final class BioDeviceListViewModel: ObservableObject {
         sdk.startBackendSession(for: x) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
-                print("BioDeviceListViewModel: startStreaming completion callback called with result: \(result)")
+                logger.debug("BioDeviceListViewModel: startStreaming completion callback called with result: \(result)")
                 switch result {
                 case .success:
                     self.startStatusMessage = nil
                     self.isStartingSession = false // will also get started/resumed event
                 case .failure(let disp):
-                    print("BioDeviceListViewModel: startStreaming failed with disposition: \(disp)")
+                    logger.debug("BioDeviceListViewModel: startStreaming failed with disposition: \(disp)")
                     switch disp {
                     case .conflict(let activeId, let startedAt):
-                        print("BioDeviceListViewModel: Conflict in callback - activeId=\(activeId) startedAt=\(String(describing: startedAt))")
+                        logger.debug("BioDeviceListViewModel: Conflict in callback - activeId=\(activeId) startedAt=\(String(describing: startedAt))")
                         self.conflictActiveId = activeId
                         self.conflictStartedAt = startedAt
                         self.showConflictAlert = true
                         self.startStatusMessage = nil
                         self.isStartingSession = false
-                        print("BioDeviceListViewModel: Callback set showConflictAlert=\(self.showConflictAlert), conflictActiveId=\(String(describing: self.conflictActiveId))")
+                        logger.debug("BioDeviceListViewModel: Callback set showConflictAlert=\(self.showConflictAlert), conflictActiveId=\(String(describing: self.conflictActiveId))")
                     default:
                         break
                     }
@@ -285,12 +288,12 @@ final class BioDeviceListViewModel: ObservableObject {
 
         // Handle conflict
         if let activeId = conflictId, !sessionActive {
-            print("BioDeviceListViewModel: Conflict detected - activeId=\(activeId) startedAt=\(String(describing: conflictStartedAt))")
+            logger.debug("BioDeviceListViewModel: Conflict detected - activeId=\(activeId) startedAt=\(String(describing: conflictStartedAt))")
             conflictActiveId = activeId
             self.conflictStartedAt = conflictStartedAt
             showConflictAlert = true
             isStartingSession = false
-            print("BioDeviceListViewModel: showConflictAlert set to \(showConflictAlert), conflictActiveId=\(String(describing: conflictActiveId))")
+            logger.debug("BioDeviceListViewModel: showConflictAlert set to \(showConflictAlert), conflictActiveId=\(String(describing: conflictActiveId))")
         } else if conflictId == nil && conflictActiveId != nil {
             // Conflict cleared
             conflictActiveId = nil
@@ -376,9 +379,9 @@ final class BioDeviceListViewModel: ObservableObject {
         Task {
             do {
                 try await sdk.executeOperation(deviceId: deviceId, operationName: operationName)
-                print("Operation '\(operationName)' executed successfully")
+                logger.debug("Operation '\(operationName)' executed successfully")
             } catch {
-                print("Failed to execute operation '\(operationName)': \(error)")
+                logger.error("Failed to execute operation '\(operationName)': \(error)")
             }
         }
     }
@@ -397,9 +400,9 @@ final class BioDeviceListViewModel: ObservableObject {
         Task {
             do {
                 try await sdk.activateStreamingProfile(deviceId: deviceId, profileName: profileName)
-                print("Streaming profile '\(profileName)' activated successfully")
+                logger.debug("Streaming profile '\(profileName)' activated successfully")
             } catch {
-                print("Failed to activate streaming profile '\(profileName)': \(error)")
+                logger.error("Failed to activate streaming profile '\(profileName)': \(error)")
             }
         }
     }
@@ -439,9 +442,9 @@ final class BioDeviceListViewModel: ObservableObject {
             do {
                 self.bufferStats = try await sdk.getBufferStats()
                 self.uploadStats = await sdk.getUploadStats()
-                print("📦 Refreshed buffer stats: pending=\(self.bufferStats?.totalPending ?? 0), uploaded=\(self.bufferStats?.totalPackets ?? 0)")
+                logger.debug("📦Refreshed buffer stats: pending=\(self.bufferStats?.totalPending ?? 0), uploaded=\(self.bufferStats?.totalPackets ?? 0)")
             } catch {
-                print("❌ Failed to refresh buffer stats: \(error)")
+                logger.error("Failed to refresh buffer stats: \(error)")
             }
         }
     }
@@ -450,12 +453,12 @@ final class BioDeviceListViewModel: ObservableObject {
         Task {
             do {
                 let count = try await sdk.resetFailedPackets(for: nil)
-                print("📦 Reset \(count) failed packets to pending - batch upload triggered")
+                logger.debug("📦Reset \(count) failed packets to pending - batch upload triggered")
                 // Refresh stats to show updated counts
                 try await Task.sleep(nanoseconds: 1_000_000_000)  // Wait 1 second for upload to start
                 refreshBufferStats()
             } catch {
-                print("❌ Failed to reset failed packets: \(error)")
+                logger.error("Failed to reset failed packets: \(error)")
             }
         }
     }
@@ -464,12 +467,12 @@ final class BioDeviceListViewModel: ObservableObject {
         Task {
             do {
                 try await sdk.clearBuffer()
-                print("📦 Cleared SQLite buffer database")
+                logger.debug("📦Cleared SQLite buffer database")
                 // Buffer will be recreated on next session start
                 // Reset stats to zero
                 bufferStats = nil
             } catch {
-                print("❌ Failed to clear buffer: \(error)")
+                logger.error("Failed to clear buffer: \(error)")
             }
         }
     }
@@ -479,9 +482,9 @@ final class BioDeviceListViewModel: ObservableObject {
         blePacketLoggingEnabled = sdk.isBLEPacketLoggingEnabled
         if blePacketLoggingEnabled {
             blePacketLogURL = sdk.getBLEPacketLogURL()
-            print("📡 Synced BLE packet logging state: enabled=true, url=\(blePacketLogURL?.lastPathComponent ?? "nil")")
+            logger.debug("Synced BLE packet logging state: enabled=true, url=\(blePacketLogURL?.lastPathComponent ?? "nil")")
         } else {
-            print("📡 Synced BLE packet logging state: enabled=false")
+            logger.debug("Synced BLE packet logging state: enabled=false")
         }
     }
 
@@ -490,7 +493,7 @@ final class BioDeviceListViewModel: ObservableObject {
             // Stop BLE packet logging
             if let url = sdk.stopBLEPacketLogging() {
                 blePacketLogURL = url
-                print("📡 BLE packet logging stopped. Log saved to: \(url.path)")
+                logger.debug("BLE packet logging stopped. Log saved to: \(url.path)")
             }
             blePacketLoggingEnabled = false
         } else {
@@ -498,9 +501,9 @@ final class BioDeviceListViewModel: ObservableObject {
             if let url = sdk.startBLEPacketLogging() {
                 blePacketLogURL = url
                 blePacketLoggingEnabled = true
-                print("📡 BLE packet logging started. Logging to: \(url.path)")
+                logger.debug("BLE packet logging started. Logging to: \(url.path)")
             } else {
-                print("📡 Failed to start BLE packet logging")
+                logger.debug("Failed to start BLE packet logging")
             }
         }
     }
@@ -526,12 +529,12 @@ final class BioDeviceListViewModel: ObservableObject {
                 return (url: file, size: size, created: created)
             }.sorted { ($0.created ?? Date.distantPast) > ($1.created ?? Date.distantPast) }
 
-            print("📁 Found \(allLogFiles.count) log files in Documents:")
+            logger.debug("Found \(allLogFiles.count) log files in Documents:")
             for file in allLogFiles {
-                print("  - \(file.url.lastPathComponent): \(file.size) bytes, created: \(file.created?.formatted() ?? "unknown")")
+                logger.debug("  - \(file.url.lastPathComponent): \(file.size) bytes")
             }
         } catch {
-            print("📁 Error listing log files: \(error)")
+            logger.debug("Error listing log files: \(error)")
             allLogFiles = []
         }
     }

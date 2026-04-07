@@ -18,7 +18,9 @@ public struct BioPPGChart: View {
             live: live,
             series: \.ppg,          // [TimeSeries]
             title: "PPG (a.u.)",
-            cap: 2_000              // ~5s @ 400 Hz
+            cap: 2_000,             // ~5s @ 400 Hz
+            smooth: true,
+            lineWidth: 1.0
         )
     }
 }

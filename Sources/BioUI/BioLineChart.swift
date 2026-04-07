@@ -10,19 +10,25 @@ public struct BioLineChart: View {
     let title: String
     let yLabel: String?
     let cap: Int
+    let smooth: Bool
+    let lineWidth: CGFloat
 
     public init(
         live: BioLiveStore,
         series: KeyPath<BioLiveStore, [TimeSeries]>,
         title: String,
         yLabel: String? = nil,
-        cap: Int = 2_000
+        cap: Int = 2_000,
+        smooth: Bool = false,
+        lineWidth: CGFloat = 1.5
     ) {
         self.live = live
         self.series = series
         self.title = title
         self.yLabel = yLabel
         self.cap = cap
+        self.smooth = smooth
+        self.lineWidth = lineWidth
     }
 
     private var flattened: [Double] {
@@ -49,8 +55,11 @@ public struct BioLineChart: View {
                             x: .value("Index", i),
                             y: .value(yLabel ?? title, v)
                         )
+                        .interpolationMethod(smooth ? .catmullRom : .linear)
+                        .lineStyle(StrokeStyle(lineWidth: lineWidth))
                     }
                 }
+                .chartXAxis(.hidden)
                 .chartYAxis { AxisMarks(position: .leading) }
                 .frame(height: 160)
             } else {
