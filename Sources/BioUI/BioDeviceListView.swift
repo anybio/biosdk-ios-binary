@@ -105,7 +105,7 @@ final class BioDeviceListViewModel: ObservableObject {
         sdk.startBackendSession(for: x) { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
-                logger.debug("BioDeviceListViewModel: startStreaming completion callback called with result: \(result)")
+                logger.debug("BioDeviceListViewModel: startStreaming completion callback called with result: \(String(describing: result))")
                 switch result {
                 case .success:
                     self.startStatusMessage = nil
@@ -293,7 +293,7 @@ final class BioDeviceListViewModel: ObservableObject {
             self.conflictStartedAt = conflictStartedAt
             showConflictAlert = true
             isStartingSession = false
-            logger.debug("BioDeviceListViewModel: showConflictAlert set to \(showConflictAlert), conflictActiveId=\(String(describing: conflictActiveId))")
+            logger.debug("BioDeviceListViewModel: showConflictAlert set to \(self.showConflictAlert), conflictActiveId=\(String(describing: self.conflictActiveId))")
         } else if conflictId == nil && conflictActiveId != nil {
             // Conflict cleared
             conflictActiveId = nil
@@ -482,7 +482,7 @@ final class BioDeviceListViewModel: ObservableObject {
         blePacketLoggingEnabled = sdk.isBLEPacketLoggingEnabled
         if blePacketLoggingEnabled {
             blePacketLogURL = sdk.getBLEPacketLogURL()
-            logger.debug("Synced BLE packet logging state: enabled=true, url=\(blePacketLogURL?.lastPathComponent ?? "nil")")
+            logger.debug("Synced BLE packet logging state: enabled=true, url=\(self.blePacketLogURL?.lastPathComponent ?? "nil")")
         } else {
             logger.debug("Synced BLE packet logging state: enabled=false")
         }
@@ -529,7 +529,7 @@ final class BioDeviceListViewModel: ObservableObject {
                 return (url: file, size: size, created: created)
             }.sorted { ($0.created ?? Date.distantPast) > ($1.created ?? Date.distantPast) }
 
-            logger.debug("Found \(allLogFiles.count) log files in Documents:")
+            logger.debug("Found \(self.allLogFiles.count) log files in Documents:")
             for file in allLogFiles {
                 logger.debug("  - \(file.url.lastPathComponent): \(file.size) bytes")
             }
