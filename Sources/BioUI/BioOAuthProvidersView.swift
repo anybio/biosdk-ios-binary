@@ -40,6 +40,12 @@ public struct BioOAuthProvidersView: View {
     private let sdk: BioSDKClient
     private let xuserId: String
     private let organizationId: Int
+    /// The project this view is scoped to. Without this, the BE returns one
+    /// row per (org, provider) configuration — if the same provider (e.g.,
+    /// Fitbit) is configured in multiple projects within an org, the user
+    /// would see duplicate rows that all reflect the same connection state.
+    /// Required so the BE filters to this program's actual provider config.
+    private let projectId: Int
     private let organizationDisplayName: String?
     private let programDisplayName: String?
 
@@ -57,12 +63,14 @@ public struct BioOAuthProvidersView: View {
         sdk: BioSDKClient,
         xuserId: String,
         organizationId: Int,
+        projectId: Int,
         organizationDisplayName: String? = nil,
         programDisplayName: String? = nil
     ) {
         self.sdk = sdk
         self.xuserId = xuserId
         self.organizationId = organizationId
+        self.projectId = projectId
         self.organizationDisplayName = organizationDisplayName
         self.programDisplayName = programDisplayName
     }
@@ -123,29 +131,39 @@ public struct BioOAuthProvidersView: View {
 
     @MainActor
     private func loadProviders() async {
-        // 1. Fetch available providers from BE — may fail if the JWT lacks
-        //    Read scope; fall back to a curated list of common providers.
+        // Fetch the configurations scoped to this program's project, with
+        // per-row connection state in the same response. The BE filters by
+        // project_id (so the user sees one row per provider, not one per
+        // configuration across the org) and includes a `connected` flag per
+        // row when xuser_id is provided. This collapses the previous
+        // two-round-trip flow (refreshAvailableProviders + refreshConnectionStatuses)
+        // into a single call and avoids the per-org listing of connected
+        // providers, which didn't scope by project either.
         do {
-            try await sdk.oauth?.refreshAvailableProviders()
-            if let configs = sdk.oauth?.availableProviders {
-                providers = configs.map { $0.asProvider }
-            }
-        } catch {
-            providers = [.fitbit, .dexcom, .whoop, .oura, .withings, .polar]
-        }
-
-        // 2. Fetch per-xuser connection statuses.
-        do {
-            try await sdk.oauth?.refreshConnectionStatuses(
-                organizationId: organizationId,
+            try await sdk.oauth?.refreshAvailableProviders(
+                projectId: projectId,
                 xuserId: xuserId
             )
+            if let configs = sdk.oauth?.availableProviders {
+                providers = configs.map { $0.asProvider }
+                for config in configs {
+                    // Per-row `connected` flag from the BE. Fall back to the
+                    // OAuthManager's in-memory cache (populated by any prior
+                    // connect/disconnect actions or refreshConnectionStatuses
+                    // calls) when the BE didn't return the flag.
+                    connectionStatuses[config.providerSlug] =
+                        config.connected ?? sdk.isOAuthProviderConnected(config.providerSlug)
+                }
+            }
         } catch {
-            // Non-fatal — providers list still renders; connection state stays "Not connected".
-        }
-
-        for provider in providers {
-            connectionStatuses[provider.slug] = sdk.isOAuthProviderConnected(provider.slug)
+            // BE call failed (network, 401, etc.). Surface the curated
+            // fallback list so the screen isn't empty; connection state
+            // stays at default (.notConnected). Tapping Connect will
+            // surface the real BE error if it persists.
+            providers = [.fitbit, .dexcom, .whoop, .oura, .withings, .polar]
+            for provider in providers {
+                connectionStatuses[provider.slug] = sdk.isOAuthProviderConnected(provider.slug)
+            }
         }
 
         isLoading = false
