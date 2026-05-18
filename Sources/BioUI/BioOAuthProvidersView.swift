@@ -40,12 +40,14 @@ public struct BioOAuthProvidersView: View {
     private let sdk: BioSDKClient
     private let xuserId: String
     private let organizationId: Int
-    /// The project this view is scoped to. Without this, the BE returns one
-    /// row per (org, provider) configuration — if the same provider (e.g.,
-    /// Fitbit) is configured in multiple projects within an org, the user
-    /// would see duplicate rows that all reflect the same connection state.
-    /// Required so the BE filters to this program's actual provider config.
-    private let projectId: Int
+    /// Opaque project key (e.g., `proj_xxxxx`) this view is scoped to.
+    /// Without this, the BE returns one row per (org, provider) configuration
+    /// — if the same provider (e.g., Fitbit) is configured in multiple
+    /// projects within an org, the user would see duplicate rows that all
+    /// reflect the same connection state. Required so the BE filters to this
+    /// program's actual provider config and so the connect flow lands the
+    /// token on the correct project.
+    private let projectKey: String
     private let organizationDisplayName: String?
     private let programDisplayName: String?
 
@@ -63,14 +65,14 @@ public struct BioOAuthProvidersView: View {
         sdk: BioSDKClient,
         xuserId: String,
         organizationId: Int,
-        projectId: Int,
+        projectKey: String,
         organizationDisplayName: String? = nil,
         programDisplayName: String? = nil
     ) {
         self.sdk = sdk
         self.xuserId = xuserId
         self.organizationId = organizationId
-        self.projectId = projectId
+        self.projectKey = projectKey
         self.organizationDisplayName = organizationDisplayName
         self.programDisplayName = programDisplayName
     }
@@ -133,7 +135,7 @@ public struct BioOAuthProvidersView: View {
     private func loadProviders() async {
         // Fetch the configurations scoped to this program's project, with
         // per-row connection state in the same response. The BE filters by
-        // project_id (so the user sees one row per provider, not one per
+        // project_key (so the user sees one row per provider, not one per
         // configuration across the org) and includes a `connected` flag per
         // row when xuser_id is provided. This collapses the previous
         // two-round-trip flow (refreshAvailableProviders + refreshConnectionStatuses)
@@ -141,7 +143,7 @@ public struct BioOAuthProvidersView: View {
         // providers, which didn't scope by project either.
         do {
             try await sdk.oauth?.refreshAvailableProviders(
-                projectId: projectId,
+                projectKey: projectKey,
                 xuserId: xuserId
             )
             if let configs = sdk.oauth?.availableProviders {
@@ -177,6 +179,7 @@ public struct BioOAuthProvidersView: View {
                 try await sdk.connectOAuthProvider(
                     provider.slug,
                     xuserId: xuserId,
+                    projectKey: projectKey,
                     presentationContextProvider: presentationContextProvider
                 )
                 connectionStatuses[provider.slug] = true
