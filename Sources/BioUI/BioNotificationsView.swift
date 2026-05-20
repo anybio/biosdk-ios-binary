@@ -13,11 +13,33 @@ import BioSDK
 
 /// Full-page notifications view with connection status and list.
 /// Use this as the main view for a notifications tab.
+///
+/// - Parameter projectKey: When provided, the view filters the store's
+///   notifications to ones tagged with this project_key (typically the
+///   active enrollment's project). Pass `nil` for cross-project views
+///   (e.g. a hub-level notification tab) — all notifications display.
+///   Notifications with `projectKey == nil` (pre-rollout BE frames that
+///   didn't include the field) are shown regardless of the filter so they
+///   don't silently disappear during the migration window.
 public struct BioNotificationsView: View {
     @ObservedObject var notifications: BioNotificationsStore
+    private let projectKey: String?
 
-    public init(notifications: BioNotificationsStore) {
+    public init(notifications: BioNotificationsStore, projectKey: String? = nil) {
         self.notifications = notifications
+        self.projectKey = projectKey
+    }
+
+    /// Notifications scoped to `projectKey` if set. `nil`-keyed notifications
+    /// pass through (back-compat with pre-rollout BE frames). When
+    /// `projectKey == nil`, all notifications pass.
+    private var visibleNotifications: [BioNotification] {
+        guard let filterKey = projectKey else {
+            return notifications.notifications
+        }
+        return notifications.notifications.filter { n in
+            n.projectKey == nil || n.projectKey == filterKey
+        }
     }
 
     public var body: some View {
@@ -25,7 +47,7 @@ public struct BioNotificationsView: View {
             // Connection status banner
             BioNotificationConnectionBanner(notifications: notifications)
 
-            if notifications.notifications.isEmpty {
+            if visibleNotifications.isEmpty {
                 emptyStateView
             } else {
                 notificationsList
@@ -57,7 +79,7 @@ public struct BioNotificationsView: View {
 
     private var notificationsList: some View {
         List {
-            ForEach(notifications.notifications, id: \.id) { notification in
+            ForEach(visibleNotifications, id: \.id) { notification in
                 BioNotificationRow(
                     notification: notification,
                     onAcknowledge: { notifications.acknowledge(notificationId: notification.id) },
