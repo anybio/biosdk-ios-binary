@@ -193,8 +193,27 @@ public struct BioOAuthProvidersView: View {
     }
 
     private func disconnect(_ provider: OAuthProvider) {
-        sdk.disconnectOAuthProvider(provider.slug)
-        connectionStatuses[provider.slug] = false
+        // Reuse the connecting-provider spinner slot — UX-wise "disconnecting"
+        // and "connecting" both block the row's button on a single in-flight
+        // BE call; one busy state is enough.
+        connectingProvider = provider.slug
+        Task { @MainActor in
+            defer { connectingProvider = nil }
+            do {
+                try await sdk.disconnectOAuthProvider(
+                    provider.slug,
+                    xuserId: xuserId,
+                    projectKey: projectKey
+                )
+                connectionStatuses[provider.slug] = false
+            } catch {
+                // Leave connectionStatuses[provider.slug] = true so the row
+                // stays Connected and the user can retry. Surfacing the
+                // error is enough — flipping to "Not connected" while the
+                // BE row is still active would be misleading.
+                showErrorAlert("Failed to disconnect: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func showErrorAlert(_ message: String) {
