@@ -270,7 +270,7 @@ private struct BioOAuthInterstitialSheet: View {
     let onCancel: () -> Void
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Connect \(provider.displayName)")
