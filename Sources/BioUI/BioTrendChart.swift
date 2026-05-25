@@ -29,15 +29,25 @@ public struct BioTrendChart: View {
     /// Single point a `BioTrendChart` plots. `id` lets SwiftUI Charts
     /// diff efficiently on series reloads (use the raw date string from
     /// the backend if available; otherwise a stable derived key).
+    ///
+    /// `source` is an optional slug (e.g. `"apple_health"`, `"fitbit"`)
+    /// identifying which device/integration produced this point. When
+    /// the input contains more than one distinct `source` value, the
+    /// chart renders one line (or grouped bar set) per source —
+    /// mirroring the live-streaming `BioHRChart` per-device pattern.
+    /// `nil` source values collapse into a single anonymous series, so
+    /// single-source callers don't have to set it.
     public struct DataPoint: Identifiable, Hashable {
         public let id: String
         public let date: Date
         public let value: Double
+        public let source: String?
 
-        public init(id: String, date: Date, value: Double) {
+        public init(id: String, date: Date, value: Double, source: String? = nil) {
             self.id = id
             self.date = date
             self.value = value
+            self.source = source
         }
     }
 
@@ -78,6 +88,12 @@ public struct BioTrendChart: View {
     let summary: Summary?
     let style: Style
     let tintColor: Color
+    /// Optional slug → Color mapping for multi-source rendering. Only
+    /// consulted when `points` contains more than one distinct
+    /// `source` slug; if a slug is missing from the map it falls back
+    /// to `tintColor`. AnyBio owns the slug palette (so the chart's
+    /// per-source colors match the section-level legend).
+    let sourcePalette: [String: Color]?
     let height: CGFloat
 
     public init(
@@ -87,6 +103,7 @@ public struct BioTrendChart: View {
         summary: Summary? = nil,
         style: Style = .lineFill,
         tintColor: Color = .accentColor,
+        sourcePalette: [String: Color]? = nil,
         height: CGFloat = 140
     ) {
         self.points = points
@@ -95,8 +112,26 @@ public struct BioTrendChart: View {
         self.summary = summary
         self.style = style
         self.tintColor = tintColor
+        self.sourcePalette = sourcePalette
         self.height = height
     }
+
+    /// Distinct source slugs present in `points`, sorted for stable
+    /// rendering order across reloads (so colors don't shuffle when a
+    /// later sync brings in points in a different order). Empty / single
+    /// slug means single-source path.
+    private var distinctSources: [String] {
+        var seen = Set<String>()
+        var ordered: [String] = []
+        for p in points {
+            if let s = p.source, seen.insert(s).inserted {
+                ordered.append(s)
+            }
+        }
+        return ordered.sorted()
+    }
+
+    private var isMultiSource: Bool { distinctSources.count > 1 }
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -168,29 +203,47 @@ public struct BioTrendChart: View {
     private var marks: some ChartContent {
         switch style {
         case .lineFill:
-            ForEach(points) { point in
-                // Line on top of the gradient area gives the "filled
-                // sparkline" look the other Bio charts use. `catmullRom`
-                // softens the daily edges without smoothing through real
-                // outliers (compare to `cardinal` which over-rounds).
-                AreaMark(
-                    x: .value("Date", point.date),
-                    y: .value("Value", point.value)
-                )
-                .foregroundStyle(LinearGradient(
-                    colors: [tintColor.opacity(0.32), tintColor.opacity(0.04)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                ))
-                .interpolationMethod(.catmullRom)
+            if isMultiSource {
+                // Per-source line. The area-fill is dropped in
+                // multi-source mode: stacking translucent fills from
+                // different sources creates a confusing color mix
+                // (and obscures the line-by-line comparison the
+                // caller asked for by sending separate sources).
+                ForEach(points) { point in
+                    LineMark(
+                        x: .value("Date", point.date),
+                        y: .value("Value", point.value)
+                    )
+                    .foregroundStyle(by: .value("Source", point.source ?? "unknown"))
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 1.6))
+                }
+            } else {
+                // Single-source path: area + line over the day points,
+                // matching the look the other Bio charts use.
+                // `catmullRom` softens the daily edges without smoothing
+                // through real outliers (compare to `cardinal` which
+                // over-rounds).
+                ForEach(points) { point in
+                    AreaMark(
+                        x: .value("Date", point.date),
+                        y: .value("Value", point.value)
+                    )
+                    .foregroundStyle(LinearGradient(
+                        colors: [tintColor.opacity(0.32), tintColor.opacity(0.04)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ))
+                    .interpolationMethod(.catmullRom)
 
-                LineMark(
-                    x: .value("Date", point.date),
-                    y: .value("Value", point.value)
-                )
-                .foregroundStyle(tintColor)
-                .interpolationMethod(.catmullRom)
-                .lineStyle(StrokeStyle(lineWidth: 1.6))
+                    LineMark(
+                        x: .value("Date", point.date),
+                        y: .value("Value", point.value)
+                    )
+                    .foregroundStyle(tintColor)
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 1.6))
+                }
             }
 
         case .bars:
@@ -199,33 +252,54 @@ public struct BioTrendChart: View {
             // below typical" read without needing to label every bar.
             // Bars sit on a 0 baseline so absolute counts are
             // visually accurate (no truncation tricks).
-            let mean: Double = points.isEmpty
-                ? 0
-                : points.map(\.value).reduce(0, +) / Double(points.count)
+            if isMultiSource {
+                // Grouped (side-by-side) bars per source within each
+                // day's x-slot. The avg rule is suppressed in
+                // multi-source mode: one mean across heterogeneous
+                // sources isn't a meaningful number (HK steps and
+                // Fitbit steps from the same user double-count); a
+                // per-source mean rule was rejected as visual clutter.
+                ForEach(points) { point in
+                    BarMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Value", point.value)
+                    )
+                    .position(by: .value("Source", point.source ?? "unknown"))
+                    .foregroundStyle(by: .value("Source", point.source ?? "unknown"))
+                    .cornerRadius(2)
+                }
+            } else {
+                let mean: Double = points.isEmpty
+                    ? 0
+                    : points.map(\.value).reduce(0, +) / Double(points.count)
 
-            ForEach(points) { point in
-                BarMark(
-                    x: .value("Date", point.date, unit: .day),
-                    y: .value("Value", point.value)
-                )
-                .foregroundStyle(tintColor.gradient)
-                .cornerRadius(3)
-            }
-            if !points.isEmpty {
-                RuleMark(y: .value("Average", mean))
-                    .foregroundStyle(tintColor.opacity(0.55))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                    .annotation(position: .top, alignment: .leading) {
-                        Text("avg")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
+                ForEach(points) { point in
+                    BarMark(
+                        x: .value("Date", point.date, unit: .day),
+                        y: .value("Value", point.value)
+                    )
+                    .foregroundStyle(tintColor.gradient)
+                    .cornerRadius(3)
+                }
+                if !points.isEmpty {
+                    RuleMark(y: .value("Average", mean))
+                        .foregroundStyle(tintColor.opacity(0.55))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                        .annotation(position: .top, alignment: .leading) {
+                            Text("avg")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                }
             }
         }
     }
 
     private var chart: some View {
-        Chart {
+        let domain = distinctSources
+        let range = domain.map { sourcePalette?[$0] ?? tintColor }
+
+        return Chart {
             marks
         }
         .chartYAxis {
@@ -245,6 +319,16 @@ public struct BioTrendChart: View {
                     .foregroundStyle(.secondary)
             }
         }
+        // Pin the per-source color domain explicitly so AnyBio's
+        // section-level legend (rendered separately) and the chart use
+        // the same source→color assignments. Without this, SwiftUI
+        // Charts auto-derives colors from its default palette and
+        // they'd disagree with the legend.
+        .chartForegroundStyleScale(domain: domain, range: range)
+        // The chart's auto-generated per-series legend duplicates the
+        // section-level legend AnyBio renders for the whole Trends
+        // group. Hide it here so we don't show the same chips twice.
+        .chartLegend(.hidden)
         .frame(height: height)
     }
 
