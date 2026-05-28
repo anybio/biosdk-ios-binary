@@ -368,7 +368,31 @@ private struct PendingProviderHandoff: Identifiable {
 
 private final class WebAuthPresentationContextProvider: NSObject,
     ASWebAuthenticationPresentationContextProviding {
+    /// Return the app's actual foreground key window. Returning a fresh
+    /// `ASPresentationAnchor()` (an unattached, sceneless `UIWindow`) was
+    /// the source of a nasty retry bug: the first OAuth attempt would
+    /// present apparently fine, but a second call (after a cancel or a
+    /// provider-side failure) would hand back another detached anchor
+    /// and `ASWebAuthenticationSession.start()` would return without
+    /// actually presenting — no browser, no error visible to the user.
+    /// State persisted across app kills because the fault was deterministic
+    /// in the code path, not in any cached object.
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        ASPresentationAnchor()
+        // Pick the foreground-active scene's key window. Falls back to any
+        // window of any foreground scene if `isKeyWindow` isn't set yet
+        // (can happen mid-sheet-presentation). Last-resort: a fresh
+        // anchor — same as the old behavior, only on the path where the
+        // app genuinely has no window (e.g. unit-test contexts).
+        let scenes = UIApplication.shared.connectedScenes
+        let foregroundScene = scenes
+            .compactMap { $0 as? UIWindowScene }
+            .first(where: { $0.activationState == .foregroundActive })
+            ?? scenes.compactMap { $0 as? UIWindowScene }.first
+        if let scene = foregroundScene {
+            return scene.windows.first(where: { $0.isKeyWindow })
+                ?? scene.windows.first
+                ?? ASPresentationAnchor()
+        }
+        return ASPresentationAnchor()
     }
 }
