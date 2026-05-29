@@ -133,6 +133,21 @@ public struct BioTrendChart: View {
 
     private var isMultiSource: Bool { distinctSources.count > 1 }
 
+    /// Color for the single-source rendering path. Uses `sourcePalette`
+    /// when the caller supplied one for this chart's lone source, so a
+    /// single-source chart embedded in a multi-source *section* matches
+    /// that section's legend; otherwise falls back to `tintColor` (the
+    /// per-metric brand color) for single-source sections and palette-less
+    /// callers. `nil`-source points (single anonymous series) also fall
+    /// back to `tintColor`.
+    private var soloSourceColor: Color {
+        guard let slug = distinctSources.first,
+              let mapped = sourcePalette?[slug] else {
+            return tintColor
+        }
+        return mapped
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
@@ -224,13 +239,24 @@ public struct BioTrendChart: View {
                 // `catmullRom` softens the daily edges without smoothing
                 // through real outliers (compare to `cardinal` which
                 // over-rounds).
+                //
+                // `soloColor` honors `sourcePalette` when the caller
+                // provided one for this chart's single source — so a
+                // single-source chart that sits in a multi-source
+                // *section* (e.g. Steps from only Fitbit alongside RHR
+                // from only WHOOP) draws in the same color the section
+                // legend assigns that source, instead of `tintColor`.
+                // Falls back to `tintColor` when no palette is given
+                // (single-source section / KitchenSink), preserving the
+                // per-metric brand color in that case.
+                let soloColor = soloSourceColor
                 ForEach(points) { point in
                     AreaMark(
                         x: .value("Date", point.date),
                         y: .value("Value", point.value)
                     )
                     .foregroundStyle(LinearGradient(
-                        colors: [tintColor.opacity(0.32), tintColor.opacity(0.04)],
+                        colors: [soloColor.opacity(0.32), soloColor.opacity(0.04)],
                         startPoint: .top,
                         endPoint: .bottom
                     ))
@@ -240,7 +266,7 @@ public struct BioTrendChart: View {
                         x: .value("Date", point.date),
                         y: .value("Value", point.value)
                     )
-                    .foregroundStyle(tintColor)
+                    .foregroundStyle(soloColor)
                     .interpolationMethod(.catmullRom)
                     .lineStyle(StrokeStyle(lineWidth: 1.6))
                 }
@@ -272,18 +298,23 @@ public struct BioTrendChart: View {
                 let mean: Double = points.isEmpty
                     ? 0
                     : points.map(\.value).reduce(0, +) / Double(points.count)
+                // See `soloSourceColor` rationale in the lineFill branch:
+                // palette color when this chart's single source has one
+                // (keeps it consistent with the section legend), else
+                // the per-metric tintColor.
+                let soloColor = soloSourceColor
 
                 ForEach(points) { point in
                     BarMark(
                         x: .value("Date", point.date, unit: .day),
                         y: .value("Value", point.value)
                     )
-                    .foregroundStyle(tintColor.gradient)
+                    .foregroundStyle(soloColor.gradient)
                     .cornerRadius(3)
                 }
                 if !points.isEmpty {
                     RuleMark(y: .value("Average", mean))
-                        .foregroundStyle(tintColor.opacity(0.55))
+                        .foregroundStyle(soloColor.opacity(0.55))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         .annotation(position: .top, alignment: .leading) {
                             Text("avg")
