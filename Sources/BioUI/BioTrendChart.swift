@@ -94,6 +94,13 @@ public struct BioTrendChart: View {
     /// to `tintColor`. AnyBio owns the slug palette (so the chart's
     /// per-source colors match the section-level legend).
     let sourcePalette: [String: Color]?
+    /// Line interpolation for the `.lineFill` style. Defaults to
+    /// `.catmullRom` (smooth) to preserve the existing look for current
+    /// callers. Pass `.linear` for discrete daily aggregates (e.g.
+    /// resting heart rate) where the smooth curve misleadingly rounds
+    /// through — and can overshoot beyond — the actual day values.
+    /// Ignored by the `.bars` style.
+    let interpolation: InterpolationMethod
     let height: CGFloat
 
     public init(
@@ -104,6 +111,7 @@ public struct BioTrendChart: View {
         style: Style = .lineFill,
         tintColor: Color = .accentColor,
         sourcePalette: [String: Color]? = nil,
+        interpolation: InterpolationMethod = .catmullRom,
         height: CGFloat = 140
     ) {
         self.points = points
@@ -113,6 +121,7 @@ public struct BioTrendChart: View {
         self.style = style
         self.tintColor = tintColor
         self.sourcePalette = sourcePalette
+        self.interpolation = interpolation
         self.height = height
     }
 
@@ -230,7 +239,7 @@ public struct BioTrendChart: View {
                         y: .value("Value", point.value)
                     )
                     .foregroundStyle(by: .value("Source", point.source ?? "unknown"))
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(interpolation)
                     .lineStyle(StrokeStyle(lineWidth: 1.6))
                 }
             } else {
@@ -260,14 +269,14 @@ public struct BioTrendChart: View {
                         startPoint: .top,
                         endPoint: .bottom
                     ))
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(interpolation)
 
                     LineMark(
                         x: .value("Date", point.date),
                         y: .value("Value", point.value)
                     )
                     .foregroundStyle(soloColor)
-                    .interpolationMethod(.catmullRom)
+                    .interpolationMethod(interpolation)
                     .lineStyle(StrokeStyle(lineWidth: 1.6))
                 }
             }
