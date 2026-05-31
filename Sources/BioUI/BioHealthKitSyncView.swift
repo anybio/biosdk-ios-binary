@@ -24,6 +24,12 @@ import HealthKit
 /// ```
 public struct BioHealthKitSyncView: View {
     private let sdk: BioSDKClient
+    /// The xUser whose HealthKit data this view syncs. Pass the active
+    /// program's xUser in hub-and-spoke apps (e.g. AnyBio) where the user
+    /// comes from enrollment rather than a streaming session. When `nil`,
+    /// sync falls back to the SDK's current active xUser (the streaming-app
+    /// behavior, e.g. KitchenSink).
+    private let xuserId: String?
 
     #if canImport(HealthKit)
     @ObservedObject private var status: HealthKitSyncStatus
@@ -31,8 +37,9 @@ public struct BioHealthKitSyncView: View {
 
     @State private var isAuthorizing = false
 
-    public init(sdk: BioSDKClient) {
+    public init(sdk: BioSDKClient, xuserId: String? = nil) {
         self.sdk = sdk
+        self.xuserId = xuserId
         #if canImport(HealthKit)
         self._status = ObservedObject(wrappedValue: sdk.healthKitSyncStatus)
         #endif
@@ -262,7 +269,11 @@ public struct BioHealthKitSyncView: View {
 
     private func syncNow() {
         Task { @MainActor in
-            _ = try? await sdk.syncHealthKit()
+            if let xuserId {
+                _ = try? await sdk.syncHealthKit(for: xuserId)
+            } else {
+                _ = try? await sdk.syncHealthKit()
+            }
         }
     }
     #endif
