@@ -101,6 +101,11 @@ public struct BioTrendChart: View {
     /// through — and can overshoot beyond — the actual day values.
     /// Ignored by the `.bars` style.
     let interpolation: InterpolationMethod
+    /// Optional formatter for the y-axis tick labels, e.g. sleep minutes →
+    /// "8h". When nil, ticks render the raw value. Use it for units that
+    /// aren't obvious on a bare number (sleep in minutes reads as "500"
+    /// otherwise, which doesn't match the "8h 20m" header summary).
+    let yAxisLabel: ((Double) -> String)?
     let height: CGFloat
 
     public init(
@@ -112,6 +117,7 @@ public struct BioTrendChart: View {
         tintColor: Color = .accentColor,
         sourcePalette: [String: Color]? = nil,
         interpolation: InterpolationMethod = .catmullRom,
+        yAxisLabel: ((Double) -> String)? = nil,
         height: CGFloat = 140
     ) {
         self.points = points
@@ -122,6 +128,7 @@ public struct BioTrendChart: View {
         self.tintColor = tintColor
         self.sourcePalette = sourcePalette
         self.interpolation = interpolation
+        self.yAxisLabel = yAxisLabel
         self.height = height
     }
 
@@ -141,6 +148,19 @@ public struct BioTrendChart: View {
     }
 
     private var isMultiSource: Bool { distinctSources.count > 1 }
+
+    /// Evenly-strided day marks across the data window for the x-axis labels.
+    /// Computed explicitly (not `.automatic`) so bar and line charts render
+    /// the SAME dates. Normalized to `startOfDay` so multi-source points that
+    /// share a day collapse to one mark and the marks align with the bars'
+    /// per-day banding. Targets ~4 labels; fewer days → fewer marks.
+    private var xAxisDateMarks: [Date] {
+        let cal = Calendar.current
+        let days = Array(Set(points.map { cal.startOfDay(for: $0.date) })).sorted()
+        guard days.count > 1 else { return days }
+        let stride = max(1, Int((Double(days.count) / 4.0).rounded(.up)))
+        return Swift.stride(from: 0, to: days.count, by: stride).map { days[$0] }
+    }
 
     /// Color for the single-source rendering path. Uses `sourcePalette`
     /// when the caller supplied one for this chart's lone source, so a
@@ -343,17 +363,23 @@ public struct BioTrendChart: View {
             marks
         }
         .chartYAxis {
-            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { _ in
+            AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                 AxisGridLine().foregroundStyle(Color.secondary.opacity(0.12))
-                AxisValueLabel().font(.caption2).foregroundStyle(.secondary)
+                if let yAxisLabel, let raw = value.as(Double.self) {
+                    AxisValueLabel { Text(yAxisLabel(raw)) }
+                        .font(.caption2).foregroundStyle(.secondary)
+                } else {
+                    AxisValueLabel().font(.caption2).foregroundStyle(.secondary)
+                }
             }
         }
         .chartXAxis {
-            // Coarse — just the endpoints. We don't want to fight the
-            // axis-label engine for crowded daily ticks on a 4-inch wide
-            // card; the trailing summary in the header carries the
-            // numeric specifics.
-            AxisMarks(values: .automatic(desiredCount: 2)) { value in
+            // Explicit, evenly-strided date marks (not `.automatic`) so EVERY
+            // chart shows the SAME dates. `.automatic(desiredCount:)` places
+            // ticks differently on a banded per-day x-scale (bars) vs a
+            // continuous one (lines), leaving bar charts with a single label
+            // while line charts get several. See `xAxisDateMarks`.
+            AxisMarks(values: xAxisDateMarks) { _ in
                 AxisValueLabel(format: .dateTime.month(.abbreviated).day())
                     .font(.caption2)
                     .foregroundStyle(.secondary)
