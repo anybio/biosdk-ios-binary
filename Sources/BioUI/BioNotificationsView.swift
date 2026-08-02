@@ -25,6 +25,12 @@ public struct BioNotificationsView: View {
     @ObservedObject var notifications: BioNotificationsStore
     private let projectKey: String?
 
+    /// Thumbs feedback held at the parent, keyed by notification id, so a rating
+    /// survives a LazyVStack row scrolling offscreen and back (per-row @State
+    /// would reset on recycle). Stage-1 local visual state only; a later stage
+    /// wires it to the SDK's submitFeedback + a thumbs-down tags sheet.
+    @State private var thumbs: [String: FeedThumb] = [:]
+
     public init(notifications: BioNotificationsStore, projectKey: String? = nil) {
         self.notifications = notifications
         self.projectKey = projectKey
@@ -42,16 +48,46 @@ public struct BioNotificationsView: View {
         }
     }
 
+    /// The feed grouped into day sections, newest day first. `visibleNotifications`
+    /// is already newest-first (the store sorts by createdAt desc), so walking it
+    /// in order yields day buckets newest-first with newest-first items inside.
+    private var daySections: [DaySection] {
+        let calendar = Calendar.current
+        var order: [Date] = []
+        var buckets: [Date: [BioNotification]] = [:]
+        for notification in visibleNotifications {
+            let day = calendar.startOfDay(for: notification.createdAt)
+            if buckets[day] == nil { order.append(day) }
+            buckets[day, default: []].append(notification)
+        }
+        return order.map { DaySection(day: $0, items: buckets[$0] ?? []) }
+    }
+
     public var body: some View {
         VStack(spacing: 0) {
-            // Connection status banner
+            // Connection status banner (unchanged).
             BioNotificationConnectionBanner(notifications: notifications)
 
             if visibleNotifications.isEmpty {
                 emptyStateView
             } else {
-                notificationsList
+                feed
             }
+        }
+        // Mark everything read when the feed surface appears, so the unread badge
+        // clears on view — no dismiss action needed. Anchored on this stable outer
+        // VStack, NOT the conditional `feed`/`emptyStateView` below: `.onAppear`
+        // on a view that's currently the empty branch wouldn't fire (and we still
+        // want an empty feed to clear any stale count). The read model is
+        // monotonic + per-xUser, so this is cheap and idempotent.
+        .onAppear { notifications.markAllRead() }
+        // Also clear while the feed is already on-screen: a WebSocket push that
+        // arrives with the tab foregrounded bumps unreadCount but doesn't re-fire
+        // onAppear, so the badge would otherwise stick over a message the user is
+        // actively reading. The `> 0` guard prevents a feedback loop (markAllRead
+        // drives the count back to 0, which re-enters this with newCount == 0).
+        .onChange(of: notifications.unreadCount) { newCount in
+            if newCount > 0 { notifications.markAllRead() }
         }
     }
 
@@ -75,21 +111,51 @@ public struct BioNotificationsView: View {
         }
     }
 
-    // MARK: - Notifications List
+    // MARK: - Continuous feed
 
-    private var notificationsList: some View {
-        List {
-            ForEach(visibleNotifications, id: \.id) { notification in
-                BioNotificationRow(
-                    notification: notification,
-                    onAcknowledge: { notifications.acknowledge(notificationId: notification.id) },
-                    onDismiss: { notifications.dismiss(notificationId: notification.id) }
-                )
+    /// A continuous, open-text feed (newest first) rather than a tap-to-open
+    /// inbox: each item shows its full body inline, grouped under day headers.
+    /// ScrollView + LazyVStack (not List) keeps it a single readable stream and
+    /// sidesteps the iOS 17.6+/18 `List` + `.sheet` double-present bug for the
+    /// thumbs-down feedback sheet landing in a later stage.
+    private var feed: some View {
+        ScrollView {
+            // TimelineView ticks every minute so the relative times ("5m ago")
+            // and the Today/Yesterday headers stay live — they're wall-clock
+            // relative, and a feed left open (e.g. a bedside RPM device) crossing
+            // midnight would otherwise keep showing stale "Today"/"5m ago" until
+            // some unrelated store change forced a re-render. Grouping by day is
+            // independent of `now` (it keys off each item's createdAt), so only
+            // the labels recompute.
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    ForEach(daySections) { section in
+                        Section {
+                            ForEach(Array(section.items.enumerated()), id: \.element.id) { index, notification in
+                                BioNotificationFeedRow(
+                                    notification: notification,
+                                    now: context.date,
+                                    thumb: Binding(
+                                        get: { thumbs[notification.id] },
+                                        set: { thumbs[notification.id] = $0 }
+                                    )
+                                )
+                                // No divider after the section's last row — it
+                                // would butt against the next pinned header
+                                // (spacing is 0) and dangle below the final item.
+                                if index < section.items.count - 1 {
+                                    Divider().padding(.leading)
+                                }
+                            }
+                        } header: {
+                            DayHeader(day: section.day, now: context.date)
+                        }
+                    }
+                }
             }
         }
-        .listStyle(.plain)
         .refreshable {
-            // Allow refresh when disconnected or failed
+            // Pull-to-refresh reconnects when disconnected or failed.
             switch notifications.connectionState {
             case .disconnected, .failed:
                 notifications.retryNow()
@@ -97,6 +163,183 @@ public struct BioNotificationsView: View {
                 break
             }
         }
+    }
+}
+
+// MARK: - FeedThumb
+
+/// Local thumbs feedback state for a feed row (Stage 1: visual only).
+private enum FeedThumb {
+    case up, down
+}
+
+// MARK: - DaySection
+
+/// One day's worth of notifications in the feed. Identified by `day` (start of
+/// day) so `ForEach` is stable across re-renders.
+private struct DaySection: Identifiable {
+    let day: Date
+    let items: [BioNotification]
+    var id: Date { day }
+}
+
+// MARK: - DayHeader
+
+/// Pinned section header labelling a day ("Today" / "Yesterday" / a date).
+/// `now` is supplied by the feed's TimelineView so the relative label stays
+/// correct across a midnight rollover while the view is open.
+private struct DayHeader: View {
+    let day: Date
+    let now: Date
+
+    var body: some View {
+        Text(label)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .foregroundColor(.secondary)
+            .textCase(.uppercase)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.vertical, 6)
+            .background(.bar)
+    }
+
+    private var label: String {
+        var calendar = Calendar.current
+        calendar.timeZone = .current
+        if calendar.isDate(day, inSameDayAs: calendar.startOfDay(for: now)) { return "Today" }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now)),
+           calendar.isDate(day, inSameDayAs: yesterday) { return "Yesterday" }
+        let formatter = DateFormatter()
+        // Drop the year for the current year to keep headers short.
+        formatter.dateFormat = calendar.isDate(day, equalTo: now, toGranularity: .year)
+            ? "EEEE, MMM d"
+            : "MMM d, yyyy"
+        return formatter.string(from: day)
+    }
+}
+
+// MARK: - BioNotificationFeedRow
+
+/// One notification in the continuous feed: priority icon, title, relative time,
+/// the FULL body inline (no expand/collapse, no dismiss — the feed never removes
+/// items), an optional action link, and a feedback bar (👍/👎 + a "Coming soon"
+/// Reply/Ask-Coach affordance).
+private struct BioNotificationFeedRow: View {
+    let notification: BioNotification
+    /// Current time, supplied by the feed's TimelineView so the relative
+    /// timestamp stays live without each row owning a timer.
+    let now: Date
+    /// Thumbs state lives in the parent (keyed by id) so it survives LazyVStack
+    /// row recycling. Stage-1 visual only; persistence lands in a later stage.
+    @Binding var thumb: FeedThumb?
+
+    private var trimmedBody: String {
+        notification.body.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                priorityIcon
+                Text(notification.title)
+                    .font(.headline)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Text(timeAgo(notification.createdAt))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            // Full body inline — this is the "open text" the redesign is about.
+            // Skip it entirely for an empty/whitespace body (e.g. a title-only
+            // frame) so the feedback bar doesn't dangle under a blank gap.
+            if !trimmedBody.isEmpty {
+                Text(notification.body)
+                    .font(.body)
+                    .foregroundColor(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // Only surface a tappable link for an actual external web URL. The BE
+            // today emits actionType == "deep_link" with a host-less relative path
+            // (e.g. "/episodes/<uuid>") or a null actionUrl — neither of which a
+            // SwiftUI Link can route, so an ungated Link renders a dead no-op. This
+            // gate lights up only for a real web_url. TODO: the proper in-app deep
+            // link (route to the episode via episodeId/projectKey, like
+            // AppShellFeature.routeToInsights) belongs in a host-injected
+            // onOpen(BioNotification) callback, not a raw URL open.
+            if notification.actionType == "web_url",
+               let actionUrl = notification.actionUrl,
+               let url = URL(string: actionUrl),
+               let scheme = url.scheme?.lowercased(),
+               scheme == "http" || scheme == "https" {
+                Link(destination: url) {
+                    Label("Open", systemImage: "arrow.up.right.square")
+                        .font(.subheadline)
+                }
+            }
+
+            feedbackBar
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var feedbackBar: some View {
+        HStack(spacing: 22) {
+            thumbButton(.up, filled: "hand.thumbsup.fill", outline: "hand.thumbsup", tint: .green)
+            thumbButton(.down, filled: "hand.thumbsdown.fill", outline: "hand.thumbsdown", tint: .red)
+            Spacer()
+            // Reply / Ask Coach — conversation infra exists on the BE but the
+            // surface is deferred to a later stage; show a non-interactive,
+            // clearly-labelled hint of what's coming.
+            HStack(spacing: 5) {
+                Image(systemName: "bubble.left")
+                Text("Ask Coach · soon")
+            }
+            .font(.caption2)
+            .foregroundColor(.secondary.opacity(0.7))
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Ask Coach, coming soon")
+        }
+        .padding(.top, 2)
+    }
+
+    private func thumbButton(_ kind: FeedThumb, filled: String, outline: String, tint: Color) -> some View {
+        Button {
+            // Stage 1: toggle local visual state only (no persistence yet).
+            thumb = (thumb == kind) ? nil : kind
+        } label: {
+            Image(systemName: thumb == kind ? filled : outline)
+                .foregroundColor(thumb == kind ? tint : .secondary)
+                .imageScale(.large)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(kind == .up ? "Helpful" : "Not helpful")
+    }
+
+    private var priorityIcon: some View {
+        Group {
+            switch notification.priority {
+            case "urgent":
+                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(.red)
+            case "high":
+                Image(systemName: "exclamationmark.circle.fill").foregroundColor(.orange)
+            case "medium":
+                Image(systemName: "bell.fill").foregroundColor(.blue)
+            default:
+                Image(systemName: "bell").foregroundColor(.secondary)
+            }
+        }
+    }
+
+    private func timeAgo(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: now)
     }
 }
 
