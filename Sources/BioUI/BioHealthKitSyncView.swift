@@ -30,6 +30,12 @@ public struct BioHealthKitSyncView: View {
     /// sync falls back to the SDK's current active xUser (the streaming-app
     /// behavior, e.g. KitchenSink).
     private let xuserId: String?
+    /// The program's `required_signals` (biosignal alias slugs). When non-empty,
+    /// "Enable" requests HealthKit authorization scoped to just these signals
+    /// (resolved via `HealthKitMappings`), asking for ECG only if the program
+    /// requires it — instead of the full catalog. Empty = request all supported
+    /// types (the streaming-app default, e.g. KitchenSink).
+    private let requiredSignals: [String]
 
     #if canImport(HealthKit)
     @ObservedObject private var status: HealthKitSyncStatus
@@ -37,9 +43,10 @@ public struct BioHealthKitSyncView: View {
 
     @State private var isAuthorizing = false
 
-    public init(sdk: BioSDKClient, xuserId: String? = nil) {
+    public init(sdk: BioSDKClient, xuserId: String? = nil, requiredSignals: [String] = []) {
         self.sdk = sdk
         self.xuserId = xuserId
+        self.requiredSignals = requiredSignals
         #if canImport(HealthKit)
         self._status = ObservedObject(wrappedValue: sdk.healthKitSyncStatus)
         #endif
@@ -259,11 +266,26 @@ public struct BioHealthKitSyncView: View {
         isAuthorizing = true
         Task { @MainActor in
             do {
-                try await sdk.enableHealthKit()
+                if requiredSignals.isEmpty {
+                    // No program scope — request all supported types (default).
+                    try await sdk.enableHealthKit()
+                } else {
+                    // Scope the request to just the program's signals so the user
+                    // authorizes only what the program needs (data minimization).
+                    let types = HealthKitMappings.mappings(forRequiredSignals: requiredSignals)
+                    let includeECG = HealthKitMappings.requiredSignalsIncludeECG(requiredSignals)
+                    try await sdk.enableHealthKit(types: types, includeECG: includeECG)
+                }
+                isAuthorizing = false
+                // First sync immediately after a successful authorization so the
+                // user gets an immediate "we've got your data" confirmation (drives
+                // the lastSync row + status indicator). The manual "Sync" button
+                // stays available for re-syncs.
+                syncNow()
             } catch {
-                // Status object handles error display
+                // Status object handles error display.
+                isAuthorizing = false
             }
-            isAuthorizing = false
         }
     }
 
