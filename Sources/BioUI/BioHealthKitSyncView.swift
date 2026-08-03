@@ -266,16 +266,11 @@ public struct BioHealthKitSyncView: View {
         isAuthorizing = true
         Task { @MainActor in
             do {
-                if requiredSignals.isEmpty {
-                    // No program scope — request all supported types (default).
-                    try await sdk.enableHealthKit()
-                } else {
-                    // Scope the request to just the program's signals so the user
-                    // authorizes only what the program needs (data minimization).
-                    let types = HealthKitMappings.mappings(forRequiredSignals: requiredSignals)
-                    let includeECG = HealthKitMappings.requiredSignalsIncludeECG(requiredSignals)
-                    try await sdk.enableHealthKit(types: types, includeECG: includeECG)
-                }
+                // The SDK resolves required_signals → HealthKit scope (data
+                // minimization — only what the program needs; requests all when
+                // empty), persists the scope so an auto-restore re-applies it, and
+                // requests authorization.
+                try await sdk.enableHealthKit(requiredSignals: requiredSignals)
                 isAuthorizing = false
                 // First sync immediately after a successful authorization so the
                 // user gets an immediate "we've got your data" confirmation (drives
