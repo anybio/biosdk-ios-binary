@@ -3,7 +3,7 @@
 //  BioSDK
 //
 //  Reusable BioUI view for Apple Health integration.
-//  Provides authorization, manual sync, and background delivery controls.
+//  Provides authorization and manual sync controls.
 //  Observes sdk.healthKitSyncStatus for live sync/upload state.
 //
 
@@ -16,7 +16,7 @@ import HealthKit
 // MARK: - BioHealthKitSyncView
 
 /// A self-contained view for managing Apple Health integration.
-/// Handles authorization, manual sync, and optional background delivery.
+/// Handles authorization and manual sync.
 ///
 /// Usage:
 /// ```swift
@@ -241,13 +241,17 @@ public struct BioHealthKitSyncView: View {
                 // minimization — only what the program needs; requests all when
                 // empty), persists the scope so an auto-restore re-applies it, and
                 // requests authorization.
-                try await sdk.enableHealthKit(requiredSignals: requiredSignals)
+                let authorized = try await sdk.enableHealthKit(requiredSignals: requiredSignals)
                 isAuthorizing = false
-                // First sync immediately after a successful authorization so the
-                // user gets an immediate "we've got your data" confirmation (drives
-                // the lastSync row + status indicator). The manual "Sync" button
-                // stays available for re-syncs.
-                syncNow()
+                // First sync immediately after a SUCCESSFUL authorization so the user
+                // gets an immediate "we've got your data" confirmation (drives the
+                // lastSync row + status indicator). Guard it: skip when the scope
+                // resolved to nothing (isAuthorized stays false — avoids a "0 samples"
+                // row under a still-"Enable" card) and when there's no xUser to
+                // attribute to (KitchenSink — avoids a "No active xUser" error row).
+                if !authorized.isEmpty, xuserId != nil {
+                    syncNow()
+                }
             } catch {
                 // Status object handles error display.
                 isAuthorizing = false
