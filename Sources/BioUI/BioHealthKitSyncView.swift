@@ -60,8 +60,10 @@ public struct BioHealthKitSyncView: View {
             if status.isAuthorized {
                 Divider().padding(.leading, 52)
                 syncRow
-                Divider().padding(.leading, 52)
-                backgroundSyncRow
+                // Background Sync toggle intentionally omitted for the OHA launch —
+                // background HealthKit sync needs thread-safe observer-lifecycle
+                // hardening first (biosdk-ios #42). Foreground "Sync" (above) +
+                // sync-on-connect cover the launch use-case.
 
                 if status.pendingCount > 0 || status.uploadedCount > 0 {
                     Divider().padding(.leading, 52)
@@ -151,37 +153,6 @@ public struct BioHealthKitSyncView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
             }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-    }
-
-    private var backgroundSyncRow: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "clock.arrow.2.circlepath")
-                .font(.title3)
-                .foregroundColor(.orange)
-                .frame(width: 32)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Background Sync")
-                    .font(.subheadline)
-                Text("Automatically sync when new data arrives")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            Spacer()
-
-            Toggle("", isOn: $status.backgroundSyncEnabled)
-                .labelsHidden()
-                .onChange(of: status.backgroundSyncEnabled) { enabled in
-                    if enabled {
-                        sdk.enableHealthKitBackgroundSync()
-                    } else {
-                        sdk.disableHealthKitBackgroundSync()
-                    }
-                }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
