@@ -1,0 +1,128 @@
+name: Claude Code Review
+
+# Auto-reviews every PR on open + every subsequent push, posting per-line
+# inline review comments. Functional equivalent to GitHub Copilot's PR
+# auto-review behavior, using the official anthropics/claude-code-action.
+# Mirrors the anybio/anybio + biosdk-ios claude-review.yml; tuned for this
+# repo — BioUI SwiftUI widgets (source) + the BioSDK binary xcframework
+# distribution.
+#
+# Setup (one-time): this repo needs an `ANTHROPIC_API_KEY` secret. It may
+# already be provided org-wide (Org → Settings → Secrets and variables →
+# Actions) and scoped to this repo, in which case nothing else is needed.
+# Otherwise add a repo secret:
+#   Settings → Secrets and variables → Actions → New repository secret
+#     Name:  ANTHROPIC_API_KEY
+#     Value: API key from https://console.anthropic.com/account/keys
+#     (the workspace must have a payment method on file — usage is metered
+#     as API calls, NOT covered by Max-plan subscription credits)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read         # checkout + diff
+  pull-requests: write   # post inline review comments
+  id-token: write        # required by the action even with API-key auth
+
+# Cancel superseded review runs when a PR receives a new push so we don't
+# pile up review jobs on rapid fix iterations.
+concurrency:
+  group: claude-review-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Claude PR review
+    runs-on: ubuntu-latest
+    # Skip review when there's nothing actionable to gain:
+    # - dependabot/* PRs: the GITHUB_TOKEN on bot-authored PRs has no
+    #   secrets access (ANTHROPIC_API_KEY resolves to empty), so the run
+    #   would just 401-fail and burn a runner minute. They're mechanical
+    #   version bumps; manual review on the rare interesting ones is
+    #   cheaper than auto-reviewing every release-train update.
+    # - PRs explicitly opting out via `[skip-review]` in the PR title:
+    #   escape hatch for trivial commits (typos, whitespace, doc-only
+    #   nits) where the captain has already judged the change doesn't
+    #   warrant a review pass.
+    if: >-
+      !startsWith(github.head_ref, 'dependabot/') &&
+      !contains(github.event.pull_request.title, '[skip-review]')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history so the action can diff against base
+
+      - name: Claude review
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request for correctness bugs, security issues,
+            and clear code-quality regressions.
+
+            Repository: ${{ github.repository }}
+            PR #${{ github.event.pull_request.number }}
+
+            Use the inline-comment tool to attach findings to specific
+            lines in the diff. Prefer few high-confidence findings over many
+            speculative ones. Skip pedantic style nits and anything a
+            linter/typechecker would catch.
+
+            When in doubt, defer to the existing code's conventions and any
+            CLAUDE.md or established patterns in the repo. This repo vends
+            BioUI (SwiftUI widgets — e.g. BioCheckInView, trend/journal/task
+            cards) as source, plus the BioSDK as a prebuilt binary xcframework
+            (Package.swift binaryTarget). PRs typically touch BioUI Swift
+            source or Package.swift. Weigh findings in that context: SwiftUI
+            view / state correctness, async/concurrency + task cancellation,
+            optional-unwrap safety, per-enrollment / per-program context, and
+            the SDK consumption contract. The bundled `*.xcframework` is a
+            build artifact — do NOT review its contents or flag its size.
+
+            **Tag every finding with a severity.** Prefix each inline
+            comment with one of these labels and apply the rubric strictly —
+            do NOT inflate severity:
+              - **[S0]** exploitable security hole shipping to prod
+                (auth/JWT bypass, a credential/secret or PHI exfiltrated
+                off-device, an enrollment token leaked to another party).
+                Rare; reserve for genuinely exploitable.
+              - **[S1]** security weakness that needs a fix before merge but
+                isn't a one-step exploit (a JWT/secret or PHI written to a
+                log line, an unvalidated deep-link/URL handler, a token
+                persisted without protection).
+              - **[P0]** correctness bug that crashes / corrupts / loses data
+                on a path that WILL be hit (force-unwrap or array crash in a
+                live code path, data shown under the wrong active
+                enrollment/program, the wrong user's context displayed).
+              - **[P1]** correctness bug on a plausible-but-narrower path
+                (edge case, error path, race needing specific timing —
+                cold launch, JETSAM relaunch, task cancellation).
+              - **[P2]** minor correctness / robustness (missing guard on an
+                unlikely input, suboptimal error handling).
+              - **[nit]** style, naming, docs, non-functional.
+
+            **ALWAYS post a summary comment** on the PR via `gh pr comment`
+            at the end of your review, even when you have no inline findings.
+            The summary must include, in 2-5 sentences:
+              1. What this PR changes (your read of the scope, one line)
+              2. **A severity tally on its own line, exactly this format so
+                 it is greppable across PRs:**
+                 `Severity: S0=<n> S1=<n> P0=<n> P1=<n> P2=<n> nit=<n>`
+                 (use 0 for any class with no findings)
+              3. Your overall assessment — one of: clean / minor issues /
+                 significant concerns / blocking. Derive it from the tally:
+                 any S0/P0 ⇒ blocking; any S1/P1 ⇒ significant concerns;
+                 only P2/nit ⇒ minor issues; all zero ⇒ clean.
+              4. If no inline findings: explicit "No inline findings — diff
+                 is sound" so the captain knows absence means clean, not
+                 incomplete.
+
+            Format the summary with a leading `### Claude review` header so
+            it's visually distinct in the PR conversation thread.
+          claude_args: |
+            --model claude-sonnet-4-6
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+          classify_inline_comments: "true"
