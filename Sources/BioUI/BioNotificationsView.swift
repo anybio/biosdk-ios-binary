@@ -9,6 +9,26 @@
 import SwiftUI
 import BioSDK
 
+// MARK: - Markdown rendering
+
+private extension String {
+    /// Render a server-composed notification body as Markdown. Coach/insight
+    /// bodies use `**bold**`, `_italics_`, links, and paragraph breaks — but
+    /// SwiftUI's `Text(String)` renders the raw source verbatim (the literal
+    /// `**` shows through). Parse to an `AttributedString` first.
+    /// `.inlineOnlyPreservingWhitespace` keeps inline styling AND blank-line
+    /// paragraph separation instead of collapsing newlines. Falls back to plain
+    /// text on a parse failure so a malformed body still renders.
+    var bioNotificationMarkdown: AttributedString {
+        var options = AttributedString.MarkdownParsingOptions()
+        options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+        if let attributed = try? AttributedString(markdown: self, options: options) {
+            return attributed
+        }
+        return AttributedString(self)
+    }
+}
+
 // MARK: - BioNotificationsView
 
 /// Full-page notifications view with connection status and list.
@@ -255,7 +275,7 @@ private struct BioNotificationFeedRow: View {
             // Skip it entirely for an empty/whitespace body (e.g. a title-only
             // frame) so the feedback bar doesn't dangle under a blank gap.
             if !trimmedBody.isEmpty {
-                Text(notification.body)
+                Text(notification.body.bioNotificationMarkdown)
                     .font(.body)
                     .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -535,7 +555,7 @@ public struct BioNotificationRow: View {
 
             // Preview or full body
             if isExpanded {
-                Text(notification.body)
+                Text(notification.body.bioNotificationMarkdown)
                     .font(.body)
                     .foregroundColor(.primary)
             } else if let preview = notification.bodyPreview {
