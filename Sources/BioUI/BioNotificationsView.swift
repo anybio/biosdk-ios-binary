@@ -11,6 +11,20 @@ import BioSDK
 
 // MARK: - Markdown rendering
 
+/// Value-type `AttributedString` box so it can live in an `NSCache` (which is
+/// reference-only). NSCache is thread-safe and self-evicting under memory
+/// pressure.
+private final class MarkdownBox {
+    let value: AttributedString
+    init(_ value: AttributedString) { self.value = value }
+}
+
+/// Memo of parsed notification bodies, keyed by the raw source string. Bodies
+/// are stable, but the feed re-evaluates every `TimelineView` tick (once/minute,
+/// for the relative-time labels), which would otherwise re-parse every visible
+/// row's Markdown on every tick. Parse once, reuse thereafter.
+private let bioMarkdownCache = NSCache<NSString, MarkdownBox>()
+
 private extension String {
     /// Render a server-composed notification body as Markdown. Coach/insight
     /// bodies use `**bold**`, `_italics_`, links, and paragraph breaks — but
@@ -18,15 +32,31 @@ private extension String {
     /// `**` shows through). Parse to an `AttributedString` first.
     /// `.inlineOnlyPreservingWhitespace` keeps inline styling AND blank-line
     /// paragraph separation instead of collapsing newlines. Falls back to plain
-    /// text on a parse failure so a malformed body still renders.
+    /// text on a parse failure so a malformed body still renders. Memoized so
+    /// repeated renders of the same body don't re-parse (see `bioMarkdownCache`).
     var bioNotificationMarkdown: AttributedString {
+        let key = self as NSString
+        if let hit = bioMarkdownCache.object(forKey: key) { return hit.value }
         var options = AttributedString.MarkdownParsingOptions()
         options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-        if let attributed = try? AttributedString(markdown: self, options: options) {
-            return attributed
-        }
-        return AttributedString(self)
+        let parsed = (try? AttributedString(markdown: self, options: options)) ?? AttributedString(self)
+        bioMarkdownCache.setObject(MarkdownBox(parsed), forKey: key)
+        return parsed
     }
+}
+
+/// Scheme guard for Markdown-embedded links in notification bodies. Server-
+/// composed body links carry live `Link` attributes; without this, SwiftUI's
+/// `Text` would fire `openURL` for ANY scheme the server embeds (`tel:`,
+/// `sms:`, `myapp://`). This restricts body links to `http`/`https` only,
+/// mirroring the scheme validation already applied to `actionUrl`. Non-link
+/// taps still fall through to the row's own gesture; a tap on a valid link
+/// opens it (rather than toggling expand) — an accepted trade-off for a feed.
+private let bioNotificationBodyOpenURL = OpenURLAction { url in
+    guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+        return .discarded
+    }
+    return .systemAction
 }
 
 // MARK: - BioNotificationsView
@@ -278,6 +308,7 @@ private struct BioNotificationFeedRow: View {
                 Text(notification.body.bioNotificationMarkdown)
                     .font(.body)
                     .foregroundColor(.primary)
+                    .environment(\.openURL, bioNotificationBodyOpenURL)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -558,10 +589,15 @@ public struct BioNotificationRow: View {
                 Text(notification.body.bioNotificationMarkdown)
                     .font(.body)
                     .foregroundColor(.primary)
+                    .environment(\.openURL, bioNotificationBodyOpenURL)
             } else if let preview = notification.bodyPreview {
-                Text(preview)
+                // Render the preview as Markdown too, so a body-preview that
+                // contains `**bold**` etc. isn't shown as raw syntax when
+                // collapsed and styled when expanded (visual asymmetry).
+                Text(preview.bioNotificationMarkdown)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                    .environment(\.openURL, bioNotificationBodyOpenURL)
                     .lineLimit(2)
             }
 
