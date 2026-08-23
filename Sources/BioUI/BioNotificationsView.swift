@@ -23,13 +23,17 @@ private final class MarkdownBox {
 /// are stable, but the feed re-evaluates every `TimelineView` tick (once/minute,
 /// for the relative-time labels), which would otherwise re-parse every visible
 /// row's Markdown on every tick. Parse once, reuse thereafter.
-private let bioMarkdownCache = NSCache<NSString, MarkdownBox>()
+private let bioMarkdownCache: NSCache<NSString, MarkdownBox> = {
+    let cache = NSCache<NSString, MarkdownBox>()
+    cache.countLimit = 200  // ~pagination cap; bounds growth (also self-evicts under memory pressure)
+    return cache
+}()
 
 private extension String {
     /// Render a server-composed notification body as Markdown. Coach/insight
-    /// bodies use `**bold**`, `_italics_`, links, and paragraph breaks — but
-    /// SwiftUI's `Text(String)` renders the raw source verbatim (the literal
-    /// `**` shows through). Parse to an `AttributedString` first.
+    /// bodies use `**bold**`, `_italics_`, and paragraph breaks — but SwiftUI's
+    /// `Text(String)` renders the raw source verbatim (the literal `**` shows
+    /// through). Parse to an `AttributedString` first.
     /// `.inlineOnlyPreservingWhitespace` keeps inline styling AND blank-line
     /// paragraph separation instead of collapsing newlines. Falls back to plain
     /// text on a parse failure so a malformed body still renders. Memoized so
@@ -39,24 +43,18 @@ private extension String {
         if let hit = bioMarkdownCache.object(forKey: key) { return hit.value }
         var options = AttributedString.MarkdownParsingOptions()
         options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-        let parsed = (try? AttributedString(markdown: self, options: options)) ?? AttributedString(self)
+        var parsed = (try? AttributedString(markdown: self, options: options)) ?? AttributedString(self)
+        // Strip link interactivity — keep bold/italic/paragraphs but drop tappable
+        // links. This removes BOTH the unvalidated-scheme risk (a server body link
+        // could open tel:/sms:/myapp://) AND the tap-consumption bug: SwiftUI `Text`
+        // link regions swallow the row's expand-tap before any parent gesture fires,
+        // regardless of an OpenURLAction result — so a guarded link would still dead-
+        // tap the row. The sanctioned tappable CTA is the notification's `actionUrl`
+        // button (scheme-guarded at its render site).
+        parsed.link = nil
         bioMarkdownCache.setObject(MarkdownBox(parsed), forKey: key)
         return parsed
     }
-}
-
-/// Scheme guard for Markdown-embedded links in notification bodies. Server-
-/// composed body links carry live `Link` attributes; without this, SwiftUI's
-/// `Text` would fire `openURL` for ANY scheme the server embeds (`tel:`,
-/// `sms:`, `myapp://`). This restricts body links to `http`/`https` only,
-/// mirroring the scheme validation already applied to `actionUrl`. Non-link
-/// taps still fall through to the row's own gesture; a tap on a valid link
-/// opens it (rather than toggling expand) — an accepted trade-off for a feed.
-private let bioNotificationBodyOpenURL = OpenURLAction { url in
-    guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
-        return .discarded
-    }
-    return .systemAction
 }
 
 // MARK: - BioNotificationsView
@@ -308,7 +306,6 @@ private struct BioNotificationFeedRow: View {
                 Text(notification.body.bioNotificationMarkdown)
                     .font(.body)
                     .foregroundColor(.primary)
-                    .environment(\.openURL, bioNotificationBodyOpenURL)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -589,7 +586,6 @@ public struct BioNotificationRow: View {
                 Text(notification.body.bioNotificationMarkdown)
                     .font(.body)
                     .foregroundColor(.primary)
-                    .environment(\.openURL, bioNotificationBodyOpenURL)
             } else if let preview = notification.bodyPreview {
                 // Render the preview as Markdown too, so a body-preview that
                 // contains `**bold**` etc. isn't shown as raw syntax when
@@ -597,7 +593,6 @@ public struct BioNotificationRow: View {
                 Text(preview.bioNotificationMarkdown)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
-                    .environment(\.openURL, bioNotificationBodyOpenURL)
                     .lineLimit(2)
             }
 
@@ -629,8 +624,13 @@ public struct BioNotificationRow: View {
                 }
             }
 
-            // Action URL if present
-            if isExpanded, let actionUrl = notification.actionUrl, let url = URL(string: actionUrl) {
+            // Action URL if present — scheme-guarded (http/https only), mirroring
+            // BioNotificationFeedRow. A server-supplied tel:/sms:/custom-scheme
+            // actionUrl must not open unconditionally.
+            if isExpanded,
+               let actionUrl = notification.actionUrl,
+               let url = URL(string: actionUrl),
+               let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
                 Link(destination: url) {
                     HStack {
                         Image(systemName: "arrow.up.right.square")
