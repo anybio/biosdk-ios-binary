@@ -19,14 +19,17 @@ private final class MarkdownBox {
     init(_ value: AttributedString) { self.value = value }
 }
 
-/// Memo of parsed notification bodies, keyed by the raw source string. Bodies
-/// are stable, but the feed re-evaluates every `TimelineView` tick (once/minute,
-/// for the relative-time labels), which would otherwise re-parse every visible
-/// row's Markdown on every tick. Parse once, reuse thereafter.
+/// Memo of parsed notification bodies, keyed by the trimmed source plus an
+/// "L|"/"_|" link-context prefix (see `bioNotificationMarkdown(linksTappable:)`).
+/// Bodies are stable, but the feed re-evaluates every `TimelineView` tick
+/// (once/minute, for the relative-time labels), which would otherwise re-parse
+/// every visible row's Markdown on every tick. Parse once, reuse thereafter.
 private let bioMarkdownCache: NSCache<NSString, MarkdownBox> = {
     let cache = NSCache<NSString, MarkdownBox>()
-    // Two entries per notification (body + bodyPreview are separate keys), so this
-    // holds ~200 notifications. Bounds growth; also self-evicts under memory pressure.
+    // The live feed (BioNotificationFeedRow) mints one key per notification
+    // ("L|"+body) → ~400 notifications of headroom; the expand/collapse row would
+    // add "_|"+body and "_|"+bodyPreview. Bounds growth; NSCache self-evicts under
+    // memory pressure.
     cache.countLimit = 400
     return cache
 }()
