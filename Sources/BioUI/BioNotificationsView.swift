@@ -46,32 +46,45 @@ private extension String {
     /// is trimmed (leading/trailing whitespace/newlines would otherwise render as a
     /// visible gap).
     ///
-    /// Link policy: an `http`/`https` link stays **tappable** so its destination
-    /// isn't lost — a feed row has no competing tap gesture, and in the expand row
-    /// tapping the link opens it while tapping elsewhere still toggles. A link with
-    /// any other scheme (`tel:`/`sms:`/custom) has only its interactivity stripped
-    /// (its visible text is kept), so no URL is silently dropped and no unvalidated
-    /// scheme is opened from the body. The display-ready value (policy already
-    /// applied) is memoized on the trimmed source, so a cache hit returns with no
-    /// per-render work.
-    var bioNotificationMarkdown: AttributedString? {
+    /// Link policy is context-dependent (`linksTappable`):
+    /// - **Feed row** (`linksTappable: true`) has no competing row gesture, so an
+    ///   `http`/`https` link stays **tappable** — its destination isn't lost. Every
+    ///   other link has only its interactivity stripped (visible text kept): a
+    ///   non-web scheme (`tel:`/`sms:`/custom) **and** a schemeless/relative link
+    ///   (`URL(string: "/episodes/9")` has a `nil` scheme) — so nothing dead-taps or
+    ///   opens an unvalidated/relative target.
+    /// - **Expand/collapse row** (`linksTappable: false`) is itself one big tap
+    ///   target (`.onTapGesture` toggles), which races with any tappable link region
+    ///   in the `Text`; strip **all** link interactivity there so the toggle is
+    ///   unambiguous. The sanctioned action is the `webActionURL` CTA button.
+    ///
+    /// The display-ready value (policy already applied) is memoized on the trimmed
+    /// source keyed by context, so a cache hit returns with no per-render work.
+    func bioNotificationMarkdown(linksTappable: Bool) -> AttributedString? {
         let source = trimmingCharacters(in: .whitespacesAndNewlines)
         guard !source.isEmpty else { return nil }
-        let key = source as NSString
+        // Key by context: the two policies produce different display values. A given
+        // body is rendered in only one context in practice, so this adds no real dup.
+        let key = ((linksTappable ? "L|" : "_|") + source) as NSString
         if let hit = bioMarkdownCache.object(forKey: key) { return hit.value }
 
         var options = AttributedString.MarkdownParsingOptions()
         options.interpretedSyntax = .inlineOnlyPreservingWhitespace
         var parsed = (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
 
-        // Strip interactivity from non-web-scheme links only (keeping their text);
-        // http/https links stay tappable. Collect ranges first — mutating a run's
-        // attribute would invalidate the `runs` view mid-iteration.
-        let nonWebLinkRanges: [Range<AttributedString.Index>] = parsed.runs.compactMap { run in
-            guard let scheme = run.link?.scheme?.lowercased() else { return nil }
-            return (scheme == "http" || scheme == "https") ? nil : run.range
+        if linksTappable {
+            // Keep only http/https tappable; strip every other link — non-web scheme
+            // AND schemeless/relative (nil scheme). Collect ranges first — mutating a
+            // run's attribute would invalidate the `runs` view mid-iteration.
+            let strippableRanges: [Range<AttributedString.Index>] = parsed.runs.compactMap { run in
+                guard run.link != nil else { return nil }
+                let scheme = run.link?.scheme?.lowercased()
+                return (scheme == "http" || scheme == "https") ? nil : run.range
+            }
+            for range in strippableRanges { parsed[range].link = nil }
+        } else {
+            parsed.link = nil // no tappable links in a row that is itself a tap target
         }
-        for range in nonWebLinkRanges { parsed[range].link = nil }
 
         bioMarkdownCache.setObject(MarkdownBox(parsed), forKey: key)
         return parsed
@@ -337,7 +350,7 @@ private struct BioNotificationFeedRow: View {
             // The helper returns nil for an empty/whitespace body (e.g. a title-only
             // frame), so it's skipped entirely and the feedback bar doesn't dangle
             // under a blank gap.
-            if let body = notification.body.bioNotificationMarkdown {
+            if let body = notification.body.bioNotificationMarkdown(linksTappable: true) {
                 Text(body)
                     .font(.body)
                     .foregroundColor(.primary)
@@ -616,12 +629,12 @@ public struct BioNotificationRow: View {
             // empty/whitespace source, so a title-only notification renders no
             // phantom blank line between the header and the type badge.
             if isExpanded {
-                if let body = notification.body.bioNotificationMarkdown {
+                if let body = notification.body.bioNotificationMarkdown(linksTappable: false) {
                     Text(body)
                         .font(.body)
                         .foregroundColor(.primary)
                 }
-            } else if let preview = notification.bodyPreview?.bioNotificationMarkdown {
+            } else if let preview = notification.bodyPreview?.bioNotificationMarkdown(linksTappable: false) {
                 // Render the preview as Markdown too, so a body-preview that
                 // contains `**bold**` etc. isn't shown as raw syntax when
                 // collapsed and styled when expanded (visual asymmetry).
