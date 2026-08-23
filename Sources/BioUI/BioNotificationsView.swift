@@ -33,40 +33,65 @@ private let bioMarkdownCache: NSCache<NSString, MarkdownBox> = {
 
 private extension String {
     /// Render a server-composed notification body as Markdown, ready for display
-    /// in a notification row. Coach/insight bodies use `**bold**`, `_italics_`, and
+    /// in a notification row — or `nil` when the trimmed source is empty, so the
+    /// caller omits the `Text` entirely (a `Text(AttributedString())` still
+    /// reserves a line of height, leaving a phantom blank gap otherwise).
+    ///
+    /// Coach/insight bodies use `**bold**`, `_italics_`, inline links, and
     /// paragraph breaks — but SwiftUI's `Text(String)` renders the raw source
     /// verbatim (the literal `**` shows through). Parse to an `AttributedString`
     /// first; `.inlineOnlyPreservingWhitespace` keeps inline styling AND blank-line
-    /// paragraph separation instead of collapsing newlines. Falls back to plain
-    /// text on a parse failure so a malformed body still renders.
+    /// paragraph separation instead of collapsing single newlines. Falls back to
+    /// plain text on a parse failure so a malformed body still renders. The source
+    /// is trimmed (leading/trailing whitespace/newlines would otherwise render as a
+    /// visible gap).
     ///
-    /// The source is trimmed (leading/trailing whitespace/newlines would otherwise
-    /// render as a visible gap under `.inlineOnlyPreservingWhitespace`). The
-    /// **full** parse (links intact) is memoized so repeated renders of the same
-    /// body don't re-parse; link interactivity is stripped **on return** — a
-    /// display policy, not a cache property — so a future link-preserving consumer
-    /// can read the cached value without a second cache.
-    var bioNotificationMarkdown: AttributedString {
+    /// Link policy: an `http`/`https` link stays **tappable** so its destination
+    /// isn't lost — a feed row has no competing tap gesture, and in the expand row
+    /// tapping the link opens it while tapping elsewhere still toggles. A link with
+    /// any other scheme (`tel:`/`sms:`/custom) has only its interactivity stripped
+    /// (its visible text is kept), so no URL is silently dropped and no unvalidated
+    /// scheme is opened from the body. The display-ready value (policy already
+    /// applied) is memoized on the trimmed source, so a cache hit returns with no
+    /// per-render work.
+    var bioNotificationMarkdown: AttributedString? {
         let source = trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !source.isEmpty else { return nil }
         let key = source as NSString
-        let parsed: AttributedString
-        if let hit = bioMarkdownCache.object(forKey: key) {
-            parsed = hit.value
-        } else {
-            var options = AttributedString.MarkdownParsingOptions()
-            options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-            parsed = (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
-            bioMarkdownCache.setObject(MarkdownBox(parsed), forKey: key)
+        if let hit = bioMarkdownCache.object(forKey: key) { return hit.value }
+
+        var options = AttributedString.MarkdownParsingOptions()
+        options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+        var parsed = (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
+
+        // Strip interactivity from non-web-scheme links only (keeping their text);
+        // http/https links stay tappable. Collect ranges first — mutating a run's
+        // attribute would invalidate the `runs` view mid-iteration.
+        let nonWebLinkRanges: [Range<AttributedString.Index>] = parsed.runs.compactMap { run in
+            guard let scheme = run.link?.scheme?.lowercased() else { return nil }
+            return (scheme == "http" || scheme == "https") ? nil : run.range
         }
-        // Display policy: strip link interactivity — keep bold/italic/paragraphs but
-        // drop tappable body links. Removes BOTH the unvalidated-scheme risk (a body
-        // link could open tel:/sms:/myapp://) AND the tap-consumption bug (SwiftUI
-        // `Text` link regions swallow the row's expand-tap before any parent gesture,
-        // regardless of an OpenURLAction result). The sanctioned tappable CTA is the
-        // scheme-guarded `actionUrl` button. Cheap (O(runs)); the parse is cached.
-        var display = parsed
-        display.link = nil
-        return display
+        for range in nonWebLinkRanges { parsed[range].link = nil }
+
+        bioMarkdownCache.setObject(MarkdownBox(parsed), forKey: key)
+        return parsed
+    }
+}
+
+private extension BioNotification {
+    /// The action URL to surface as an external (Safari) CTA — non-nil only for an
+    /// explicit `web_url` action with an `http`/`https` scheme. A `deep_link` (even
+    /// one whose `actionUrl` is https — it routes through the host's in-app
+    /// notification-tap handler, not Safari) or a non-web scheme (`tel:`/`sms:`/
+    /// custom) returns nil, so neither row renders a raw external-link button for
+    /// it. Single definition shared by both rows so the policy can't diverge.
+    var webActionURL: URL? {
+        guard actionType == "web_url",
+              let actionUrl,
+              let url = URL(string: actionUrl),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return url
     }
 }
 
@@ -295,10 +320,6 @@ private struct BioNotificationFeedRow: View {
     /// row recycling. Stage-1 visual only; persistence lands in a later stage.
     @Binding var thumb: FeedThumb?
 
-    private var trimmedBody: String {
-        notification.body.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -313,29 +334,26 @@ private struct BioNotificationFeedRow: View {
             }
 
             // Full body inline — this is the "open text" the redesign is about.
-            // Skip it entirely for an empty/whitespace body (e.g. a title-only
-            // frame) so the feedback bar doesn't dangle under a blank gap.
-            if !trimmedBody.isEmpty {
-                Text(notification.body.bioNotificationMarkdown)
+            // The helper returns nil for an empty/whitespace body (e.g. a title-only
+            // frame), so it's skipped entirely and the feedback bar doesn't dangle
+            // under a blank gap.
+            if let body = notification.body.bioNotificationMarkdown {
+                Text(body)
                     .font(.body)
                     .foregroundColor(.primary)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // Only surface a tappable link for an actual external web URL. The BE
-            // today emits actionType == "deep_link" with a host-less relative path
-            // (e.g. "/episodes/<uuid>") or a null actionUrl — neither of which a
-            // SwiftUI Link can route, so an ungated Link renders a dead no-op. This
-            // gate lights up only for a real web_url. TODO: the proper in-app deep
-            // link (route to the episode via episodeId/projectKey, like
-            // AppShellFeature.routeToInsights) belongs in a host-injected
+            // Only surface a tappable link for an actual external web URL
+            // (`webActionURL`, shared with BioNotificationRow). The BE today emits
+            // actionType == "deep_link" with a host-less relative path (e.g.
+            // "/episodes/<uuid>") or a null actionUrl — neither of which a SwiftUI
+            // Link can route, so an ungated Link renders a dead no-op. TODO: the
+            // proper in-app deep link (route to the episode via episodeId/projectKey,
+            // like AppShellFeature.routeToInsights) belongs in a host-injected
             // onOpen(BioNotification) callback, not a raw URL open.
-            if notification.actionType == "web_url",
-               let actionUrl = notification.actionUrl,
-               let url = URL(string: actionUrl),
-               let scheme = url.scheme?.lowercased(),
-               scheme == "http" || scheme == "https" {
+            if let url = notification.webActionURL {
                 Link(destination: url) {
                     Label("Open", systemImage: "arrow.up.right.square")
                         .font(.subheadline)
@@ -594,16 +612,20 @@ public struct BioNotificationRow: View {
                     .foregroundColor(.secondary)
             }
 
-            // Preview or full body
+            // Preview or full body. The Markdown helper returns nil for an
+            // empty/whitespace source, so a title-only notification renders no
+            // phantom blank line between the header and the type badge.
             if isExpanded {
-                Text(notification.body.bioNotificationMarkdown)
-                    .font(.body)
-                    .foregroundColor(.primary)
-            } else if let preview = notification.bodyPreview {
+                if let body = notification.body.bioNotificationMarkdown {
+                    Text(body)
+                        .font(.body)
+                        .foregroundColor(.primary)
+                }
+            } else if let preview = notification.bodyPreview?.bioNotificationMarkdown {
                 // Render the preview as Markdown too, so a body-preview that
                 // contains `**bold**` etc. isn't shown as raw syntax when
                 // collapsed and styled when expanded (visual asymmetry).
-                Text(preview.bioNotificationMarkdown)
+                Text(preview)
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(2)
@@ -637,16 +659,13 @@ public struct BioNotificationRow: View {
                 }
             }
 
-            // Action URL if present — gated exactly like BioNotificationFeedRow:
-            // actionType == "web_url" AND an http/https scheme. A `deep_link`
-            // notification (even one whose actionUrl is https) routes through the
-            // host's in-app handler, not a Safari button; and a tel:/sms:/custom-
-            // scheme actionUrl must not open unconditionally.
-            if isExpanded,
-               notification.actionType == "web_url",
-               let actionUrl = notification.actionUrl,
-               let url = URL(string: actionUrl),
-               let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            // Action URL if present — gated exactly like BioNotificationFeedRow via
+            // the shared `webActionURL` helper (actionType == "web_url" AND an
+            // http/https scheme). A `deep_link` notification (even one whose
+            // actionUrl is https) routes through the host's in-app handler, not a
+            // Safari button; and a tel:/sms:/custom-scheme actionUrl must not open
+            // unconditionally.
+            if isExpanded, let url = notification.webActionURL {
                 Link(destination: url) {
                     HStack {
                         Image(systemName: "arrow.up.right.square")
