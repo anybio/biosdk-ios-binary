@@ -25,35 +25,48 @@ private final class MarkdownBox {
 /// row's Markdown on every tick. Parse once, reuse thereafter.
 private let bioMarkdownCache: NSCache<NSString, MarkdownBox> = {
     let cache = NSCache<NSString, MarkdownBox>()
-    cache.countLimit = 200  // ~pagination cap; bounds growth (also self-evicts under memory pressure)
+    // Two entries per notification (body + bodyPreview are separate keys), so this
+    // holds ~200 notifications. Bounds growth; also self-evicts under memory pressure.
+    cache.countLimit = 400
     return cache
 }()
 
 private extension String {
-    /// Render a server-composed notification body as Markdown. Coach/insight
-    /// bodies use `**bold**`, `_italics_`, and paragraph breaks — but SwiftUI's
-    /// `Text(String)` renders the raw source verbatim (the literal `**` shows
-    /// through). Parse to an `AttributedString` first.
-    /// `.inlineOnlyPreservingWhitespace` keeps inline styling AND blank-line
+    /// Render a server-composed notification body as Markdown, ready for display
+    /// in a notification row. Coach/insight bodies use `**bold**`, `_italics_`, and
+    /// paragraph breaks — but SwiftUI's `Text(String)` renders the raw source
+    /// verbatim (the literal `**` shows through). Parse to an `AttributedString`
+    /// first; `.inlineOnlyPreservingWhitespace` keeps inline styling AND blank-line
     /// paragraph separation instead of collapsing newlines. Falls back to plain
-    /// text on a parse failure so a malformed body still renders. Memoized so
-    /// repeated renders of the same body don't re-parse (see `bioMarkdownCache`).
+    /// text on a parse failure so a malformed body still renders.
+    ///
+    /// The source is trimmed (leading/trailing whitespace/newlines would otherwise
+    /// render as a visible gap under `.inlineOnlyPreservingWhitespace`). The
+    /// **full** parse (links intact) is memoized so repeated renders of the same
+    /// body don't re-parse; link interactivity is stripped **on return** — a
+    /// display policy, not a cache property — so a future link-preserving consumer
+    /// can read the cached value without a second cache.
     var bioNotificationMarkdown: AttributedString {
-        let key = self as NSString
-        if let hit = bioMarkdownCache.object(forKey: key) { return hit.value }
-        var options = AttributedString.MarkdownParsingOptions()
-        options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-        var parsed = (try? AttributedString(markdown: self, options: options)) ?? AttributedString(self)
-        // Strip link interactivity — keep bold/italic/paragraphs but drop tappable
-        // links. This removes BOTH the unvalidated-scheme risk (a server body link
-        // could open tel:/sms:/myapp://) AND the tap-consumption bug: SwiftUI `Text`
-        // link regions swallow the row's expand-tap before any parent gesture fires,
-        // regardless of an OpenURLAction result — so a guarded link would still dead-
-        // tap the row. The sanctioned tappable CTA is the notification's `actionUrl`
-        // button (scheme-guarded at its render site).
-        parsed.link = nil
-        bioMarkdownCache.setObject(MarkdownBox(parsed), forKey: key)
-        return parsed
+        let source = trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = source as NSString
+        let parsed: AttributedString
+        if let hit = bioMarkdownCache.object(forKey: key) {
+            parsed = hit.value
+        } else {
+            var options = AttributedString.MarkdownParsingOptions()
+            options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+            parsed = (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
+            bioMarkdownCache.setObject(MarkdownBox(parsed), forKey: key)
+        }
+        // Display policy: strip link interactivity — keep bold/italic/paragraphs but
+        // drop tappable body links. Removes BOTH the unvalidated-scheme risk (a body
+        // link could open tel:/sms:/myapp://) AND the tap-consumption bug (SwiftUI
+        // `Text` link regions swallow the row's expand-tap before any parent gesture,
+        // regardless of an OpenURLAction result). The sanctioned tappable CTA is the
+        // scheme-guarded `actionUrl` button. Cheap (O(runs)); the parse is cached.
+        var display = parsed
+        display.link = nil
+        return display
     }
 }
 
@@ -624,10 +637,13 @@ public struct BioNotificationRow: View {
                 }
             }
 
-            // Action URL if present — scheme-guarded (http/https only), mirroring
-            // BioNotificationFeedRow. A server-supplied tel:/sms:/custom-scheme
-            // actionUrl must not open unconditionally.
+            // Action URL if present — gated exactly like BioNotificationFeedRow:
+            // actionType == "web_url" AND an http/https scheme. A `deep_link`
+            // notification (even one whose actionUrl is https) routes through the
+            // host's in-app handler, not a Safari button; and a tel:/sms:/custom-
+            // scheme actionUrl must not open unconditionally.
             if isExpanded,
+               notification.actionType == "web_url",
                let actionUrl = notification.actionUrl,
                let url = URL(string: actionUrl),
                let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
