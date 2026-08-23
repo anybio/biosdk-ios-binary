@@ -70,15 +70,19 @@ private extension String {
 
         var options = AttributedString.MarkdownParsingOptions()
         options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-        var parsed = (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
+        // On a parse failure, return the plain-text fallback WITHOUT caching it, so
+        // the cache holds only successfully-parsed values (not an immortalized fallback).
+        guard var parsed = try? AttributedString(markdown: source, options: options) else {
+            return AttributedString(source)
+        }
 
         if linksTappable {
             // Keep only http/https tappable; strip every other link — non-web scheme
             // AND schemeless/relative (nil scheme). Collect ranges first — mutating a
             // run's attribute would invalidate the `runs` view mid-iteration.
             let strippableRanges: [Range<AttributedString.Index>] = parsed.runs.compactMap { run in
-                guard run.link != nil else { return nil }
-                let scheme = run.link?.scheme?.lowercased()
+                guard let url = run.link else { return nil }
+                let scheme = url.scheme?.lowercased() ?? ""
                 return (scheme == "http" || scheme == "https") ? nil : run.range
             }
             for range in strippableRanges { parsed[range].link = nil }
