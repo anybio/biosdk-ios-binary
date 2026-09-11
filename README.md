@@ -70,4 +70,4 @@ This binary distribution uses an umbrella framework approach to avoid Swift ABI 
 
 ## License
 
-Proprietary - © AnyBio, Inc.
+Proprietary - © Any Biosignal, Inc.
