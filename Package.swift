@@ -17,8 +17,8 @@ let package = Package(
     targets: [
         .binaryTarget(
             name: "BioSDK",
-            url: "https://github.com/anybio/biosdk-ios-binary/releases/download/1.0.63/BioSDK.xcframework.zip",
-            checksum: "46c8b6fa9b7c3cc9982d2c33e9d3e9ed3458b7ce65b18b5253acaaa5693583d6"
+            url: "https://github.com/anybio/biosdk-ios-binary/releases/download/1.0.64/BioSDK.xcframework.zip",
+            checksum: "f17e1200bf996377ec7888dd85965e7face6fe8d5f11dfd9b3e447ab03a2663f"
         ),
         .target(
             name: "BioUI",
