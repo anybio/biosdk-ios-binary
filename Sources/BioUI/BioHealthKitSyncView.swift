@@ -176,7 +176,10 @@ public struct BioHealthKitSyncView: View {
                         .foregroundColor(.green)
                 }
                 if status.failedCount > 0 {
-                    Text("\(status.failedCount) failed (will retry)")
+                    // NOT "will retry": `failedCount` is rows at or past the retry cap, which the
+                    // pending query excludes by definition. They are done, and telling the user
+                    // otherwise hid a real stall behind a message that sounded self-healing.
+                    Text("\(status.failedCount) failed — won't retry")
                         .font(.caption)
                         .foregroundColor(.orange)
                 }
