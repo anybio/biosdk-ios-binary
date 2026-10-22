@@ -65,7 +65,11 @@ public struct BioHealthKitSyncView: View {
                 // hardening first (biosdk-ios #42). Foreground "Sync" (above) +
                 // sync-on-connect cover the launch use-case.
 
-                if status.pendingCount > 0 || status.uploadedCount > 0 {
+                // `failedCount` is in the gate deliberately: stats are per-xUser, so an enrollment whose
+                // first sync was refused end to end reaches pending == 0 && uploaded == 0 with a full
+                // failed count — and without this the row that reports it is never built at all, hiding
+                // the failure in exactly the case where it is the only thing to report.
+                if status.pendingCount > 0 || status.uploadedCount > 0 || status.failedCount > 0 {
                     Divider().padding(.leading, 52)
                     bufferStatusRow
                 }
@@ -176,7 +180,10 @@ public struct BioHealthKitSyncView: View {
                         .foregroundColor(.green)
                 }
                 if status.failedCount > 0 {
-                    Text("\(status.failedCount) failed (will retry)")
+                    // NOT "will retry": `failedCount` is rows at or past the retry cap, which the
+                    // pending query excludes by definition. They are done, and telling the user
+                    // otherwise hid a real stall behind a message that sounded self-healing.
+                    Text("\(status.failedCount) failed — won't retry")
                         .font(.caption)
                         .foregroundColor(.orange)
                 }
